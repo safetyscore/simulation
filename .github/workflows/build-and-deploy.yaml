@@ -1,0 +1,30 @@
+name: Build and Deploy to GitHub Pages
+on:
+  push:
+    branches:
+      - master
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2.1.1
+
+      - name: Build
+        run: |
+          npm install
+          npm run build
+
+      - name: Deploy to GitHub Pages
+        run: |
+          git config --global user.email `git log -1 --pretty=format:'%ae'`
+          git config --global user.name `git log -1 --pretty=format:'%an'`
+          cp CNAME /tmp/
+          cp -r site /tmp/site
+          git remote update
+          git checkout gh-pages
+          rm -rf *
+          mv /tmp/CNAME .
+          mv /tmp/site/* .
+          git add -A .
+          git diff --staged --quiet || (git commit -m "Update site" && git push origin gh-pages)
