@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.20.0/prism.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.20.0/components/prism-javascript.js"></script>
+<script src="simulation.js"></script>
+<link rel="stylesheet" href="style.css">
+<body>
+<div id="top">
+    <div class="action" id="settings"><img src="settings.svg" alt="Settings"><span>Edit Config</span></div>
+    <div class="action" id="download"><img src="download.svg" alt="Download"><span>Download PNG</span></div>
+    <div id="info">
+        <div>Day<div class="right" id="day">0</div></div>
+        <div>Dead<div class="right" id="dead">0</div></div>
+        <div>Immune<div class="right" id="immune">0</div></div>
+        <div>Healthy<div class="right" id="healthy">290</div></div>
+        <div>Sick<div class="right" id="infected">0</div></div>
+        <div class="clear"></div>
+        <div><select id="options">
+            <option value="none">Use Zero Interventions</option>
+            <option value="safetyscore">Use SafetyScore</option>
+            <option value="contacttracing">Use Contact Tracing</option>
+        </select></div>
+    </div>
+    <canvas id="graph"></canvas>
+</div>
+<canvas id="viz"></canvas>
+<div id="overlay"><div id="inlay">
+    <div id="error">Failed to load config: EvalError</div>
+    <div id="editor">
+        <textarea id="config" spellcheck="false"></textarea>
+        <pre id="mirror">s</pre>
+    </div>
+    <button id="update-config">Update Config</button>
+</div></div>
+<!--
+You can use certain keyboard shortcuts:
+
+    Press e to bring up the config editor
+    Press escape to exit the config editor without saving changes
+    Press ctrl-enter to save changes to the config and run new simulation
+    Press m to change the trace methodology
+
+You can find the full source at https://github.com/safetyscore/simulation
+-->

@@ -1,0 +1,25 @@
+{
+  "author": "tav <tav@espians.com>",
+  "dependencies": {
+    "typescript": "3.9.3"
+  },
+  "description": "Playable simulation comparing the effectiveness of SafetyScore",
+  "homepage": "https://github.com/safetyscore/simulation",
+  "keywords": [
+    "agent-based-model",
+    "contact-tracing",
+    "epidemics",
+    "infectious-diseases"
+  ],
+  "license": "Apache-2.0",
+  "main": "simulation.js",
+  "name": "simulation",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/safetyscore/simulation"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "version": "0.0.1"
+}

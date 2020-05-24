@@ -1,0 +1,208 @@
+body,
+html {
+  font-family: "HelveticaNeue-Light", "Helvetica Neue Light", "Helvetica Neue",
+    Helvetica, Arial, "Lucida Grande", sans-serif;
+  font-size: 15px;
+  font-weight: 300;
+  line-height: 1.6em;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  width: 100%;
+}
+
+button {
+  background: #009d51;
+  border: 0;
+  color: #fff;
+  cursor: pointer;
+  display: block;
+  font-size: 20px;
+  margin: 30px auto 0 auto;
+  padding: 15px 13px;
+  user-select: none;
+}
+
+canvas {
+  display: block;
+}
+
+select {
+  margin-top: 10px;
+  width: 100%;
+}
+
+#editor {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+pre,
+textarea {
+  -ms-overflow-style: none;
+  font-family: Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  font-size: 16px;
+  display: block;
+  height: 100%;
+  line-height: 1.6em;
+  margin: 0;
+  overflow: scroll;
+  padding: 0;
+  position: absolute;
+  width: 100%;
+}
+
+pre::-webkit-scrollbar {
+  width: 0 !important;
+}
+
+pre {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  z-index: 20;
+}
+
+pre .boolean,
+pre .keyword {
+  color: #8bb4b8;
+}
+
+pre .class-name,
+pre .string {
+  color: #ff3945;
+}
+
+pre .comment {
+  color: #8a8a8a;
+}
+
+pre .number {
+  color: #009d51;
+}
+
+pre .operator {
+  color: #ccc;
+}
+
+textarea {
+  /* display: none; */
+  -webkit-text-fill-color: transparent;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  outline: none;
+  resize: none;
+  text-shadow: 0px 0px 0px rgba(0, 0, 0, 0);
+  z-index: 30;
+}
+
+textarea::-webkit-scrollbar {
+  width: 0 !important;
+}
+
+.action {
+  padding: 12px;
+  position: absolute;
+  right: 0;
+}
+
+.action:hover {
+  cursor: pointer;
+}
+
+.action:hover span {
+  visibility: visible;
+}
+
+.action span {
+  background: #fbf6b3;
+  color: #000;
+  margin-top: -5px;
+  min-width: 120px;
+  padding: 8px 10px;
+  position: absolute;
+  right: 100%;
+  text-align: center;
+  visibility: hidden;
+  z-index: 5;
+}
+
+.clear {
+  clear: both;
+  height: 0;
+  width: 0;
+}
+
+.right {
+  float: right;
+  font-weight: bold;
+}
+
+#download {
+  display: none;
+  top: 40px;
+}
+
+#error {
+  background: #ffa2a4;
+  display: none;
+  margin-bottom: 20px;
+  padding: 20px;
+}
+
+#graph {
+  float: left;
+}
+
+#info {
+  background: #fff;
+  float: left;
+  overflow: hidden;
+  padding: 18px 15px;
+  width: 200px;
+}
+
+#inlay {
+  align-items: stretch;
+  background: #fff;
+  display: flex;
+  flex-flow: column;
+  height: 80%;
+  margin: 20px auto 0 auto;
+  padding: 20px;
+  width: 80%;
+}
+
+#overlay {
+  background: rgba(0, 0, 0, 0.5);
+  display: none;
+  height: 100%;
+  left: 0;
+  position: fixed;
+  top: 0;
+  width: 100%;
+  z-index: 10;
+}
+
+#settings {
+  top: 0;
+}
+
+#settings img {
+  width: 24px;
+}
+
+#top {
+  background: #eeeeee;
+  user-select: none;
+}
+
+#viz {
+  background: #41646c;
+  /* background: #eeeeee; */
+  clear: both;
+  width: 100%;
+}
