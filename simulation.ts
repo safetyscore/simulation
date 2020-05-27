@@ -1282,7 +1282,7 @@ function defaultConfig(): CustomConfig {
     // the SafetyScore level below which one is notified to self-isolate
     isolationThreshold: 50,
     // total number of people
-    population: 100000,
+    population: 10000,
     // number of days before becoming infectious
     preInfectiousDays: 3,
     // number of days of being infectious before possibly becoming symptomatic
@@ -1635,6 +1635,7 @@ function validateConfig(cfg: Config) {
     "publicClusters",
     "selfAttestation",
     "selfAttestationWeight",
+    "selfIsolation",
     "symptomatic",
     "testing",
   ])
