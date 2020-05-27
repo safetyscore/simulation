@@ -1,31 +1,33 @@
 <!doctype html>
 <meta charset="utf-8">
+<title>SafetyScore Simulation</title>
+<meta name="description" content="Try out different parameters and see the effectiveness of SafetyScore!">
 <script src="https://cdn.jsdelivr.net/npm/prismjs@1.20.0/prism.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/prismjs@1.20.0/components/prism-javascript.js"></script>
 <script src="simulation.js"></script>
 <link rel="stylesheet" href="style.css">
 <body>
 <div id="top">
-    <div class="action" id="settings"><img src="settings.svg" alt="Settings"><span>Edit Config</span></div>
+    <div class="action" id="edit-config"><img src="settings.svg" alt="Settings"><span>Edit Config</span></div>
     <div class="action" id="download"><img src="download.svg" alt="Download"><span>Download PNG</span></div>
     <div id="info">
         <div>Day<div class="right" id="day">0</div></div>
-        <div>Dead<div class="right" id="dead">0</div></div>
-        <div>Immune<div class="right" id="immune">0</div></div>
-        <div>Healthy<div class="right" id="healthy">290</div></div>
+        <div>Recovered<div class="right" id="recovered">0</div></div>
+        <div>Healthy<div class="right" id="healthy">0</div></div>
         <div>Sick<div class="right" id="infected">0</div></div>
+        <div>Isolated<div class="right" id="isolated">0</div></div>
         <div class="clear"></div>
         <div><select id="options">
             <option value="none">Use Zero Interventions</option>
+            <option value="apple-google">Use Apple/Google API</option>
             <option value="safetyscore">Use SafetyScore</option>
-            <option value="contacttracing">Use Contact Tracing</option>
         </select></div>
     </div>
     <canvas id="graph"></canvas>
 </div>
 <canvas id="viz"></canvas>
 <div id="overlay"><div id="inlay">
-    <div id="error">Failed to load config: EvalError</div>
+    <div id="error"></div>
     <div id="editor">
         <textarea id="config" spellcheck="false"></textarea>
         <pre id="mirror">s</pre>

@@ -1,7 +1,7 @@
 {
 	"compilerOptions": {
         "alwaysStrict": true,
-		"lib": ["es5", "es2015.promise", "dom", "es2015"],
+		"lib": ["dom", "es5", "es2015"],
 		"module": "None",
 		"noImplicitAny": true,
 		"noImplicitThis": true,

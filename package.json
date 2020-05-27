@@ -1,6 +1,7 @@
 {
   "author": "tav <tav@espians.com>",
   "dependencies": {
+    "@types/node": "14.0.5",
     "typescript": "3.9.3"
   },
   "description": "Playable simulation comparing the effectiveness of SafetyScore",
