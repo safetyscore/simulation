@@ -6,8 +6,10 @@ const CLUSTER_GATEKEPT = 1
 const CLUSTER_PUBLIC = 2
 
 // Attribute values for people.
-const PERSON_APP_INSTALLED = 1
-const PERSON_SYMPTOMATIC = 2
+const PERSON_APP_FOREIGN_CLUSTER = 1
+const PERSON_APP_INSTALLED = 2
+const PERSON_APP_OWN_CLUSTER = 4
+const PERSON_SYMPTOMATIC = 8
 
 // Constants relating to the visualisations.
 const CLUSTER_HEIGHT = 24
@@ -90,7 +92,8 @@ interface Config {
   immunity: Distribution
   initialTokens: number
   infectionRisk: number
-  install: number
+  installForeign: number
+  installOwn: number
   isolation: number
   isolationDays: number
   isolationThreshold: number
@@ -237,14 +240,16 @@ class Graph {
     ctx.imageSmoothingEnabled = false
     const elems = [
       $("day"),
+      $("dead"),
       $("recovered"),
       $("healthy"),
       $("infected"),
       $("isolated"),
     ]
-    elems[1].style.color = COLOUR_RECOVERED
-    elems[2].style.color = COLOUR_HEALTHY
-    elems[3].style.color = COLOUR_INFECTED
+    elems[1].style.color = COLOUR_DEAD
+    elems[2].style.color = COLOUR_RECOVERED
+    elems[3].style.color = COLOUR_HEALTHY
+    elems[4].style.color = COLOUR_INFECTED
     this.$ = elems
     this.canvas = canvas
     this.cfg = cfg
@@ -331,10 +336,11 @@ class Graph {
     this.values.push(values)
     const day = this.values.length - 1
     $[0].innerText = day.toString()
-    $[1].innerText = stats.recovered.toString()
-    $[2].innerText = stats.healthy.toString()
-    $[3].innerText = stats.infected.toString()
-    $[4].innerText = stats.isolated.toString()
+    $[1].innerText = stats.dead.toString()
+    $[2].innerText = stats.recovered.toString()
+    $[3].innerText = stats.healthy.toString()
+    $[4].innerText = stats.infected.toString()
+    $[5].innerText = stats.isolated.toString()
     this.draw(day)
   }
 }
@@ -385,10 +391,12 @@ class Person {
   infectionEndDay: number
   installDate: number
   isolationEndDay: number
+  score: number
   sim: Simulation
   spread: number
   status: number
   testDay: number
+  tokens: number[][]
   x: number
   y: number
 
@@ -403,14 +411,58 @@ class Person {
     this.immunityEndDay = 0
     this.installDate = 0
     this.isolationEndDay = 0
+    this.score = 0
     this.sim = sim
     this.spread = 0
     this.status = STATUS_HEALTHY
     this.testDay = 0
+    this.tokens = []
   }
 
   appInstalled() {
     return (this.attrs & PERSON_APP_INSTALLED) !== 0
+  }
+
+  // NOTE(tav): We simplify the calculations and deposit the tokens in just the
+  // current daily account.
+  deposit(
+    tokens: number,
+    from: number,
+    depth: number,
+    counts: Map<number, number>[],
+    people: Person[],
+    unitToken: number
+  ) {
+    if (this.status === STATUS_DEAD) {
+      return
+    }
+    this.tokens[this.tokens.length - 1][0] += tokens
+    if (depth === 2) {
+      return
+    }
+    const count = counts[depth]
+    count.clear()
+    let total = 0
+    for (const contacts of this.contacts) {
+      for (const id of contacts) {
+        if (count.has(id)) {
+          count.set(id, count.get(id)! + 1)
+        } else {
+          count.set(id, 1)
+        }
+        total++
+      }
+    }
+    const cdepth = depth + 1
+    const units = tokens / total
+    for (const [id, tally] of count) {
+      const amount = tally * units
+      if (amount < unitToken) {
+        continue
+      }
+      const person = people[id]
+      person.deposit(amount, this.id, cdepth, counts, people, unitToken)
+    }
   }
 
   infect(today: number, gen: number) {
@@ -443,8 +495,10 @@ class Person {
     return (this.status & STATUS_INFECTED) !== 0
   }
 
-  installApp() {
+  installSafetyScore(day: number) {
     this.attrs |= PERSON_APP_INSTALLED
+    this.installDate = day
+    this.tokens.push([0, 0])
   }
 
   isolate(end: number) {
@@ -455,16 +509,8 @@ class Person {
     this.status |= STATUS_ISOLATED
   }
 
-  notInfected() {
-    return (this.status & STATUS_INFECTED) === 0
-  }
-
   symptomatic() {
     return (this.attrs & PERSON_SYMPTOMATIC) !== 0
-  }
-
-  updateStatus() {
-    return (this.status & STATUS_INFECTED) !== 0
   }
 }
 
@@ -472,8 +518,8 @@ class Person {
 // https://stackoverflow.com/questions/1241555/algorithm-to-generate-poisson-and-binomial-random-numbers
 class PoissonDistribution {
   limit: number
-  min: number
   max: number
+  min: number
 
   constructor(mean: number, min: number, max: number) {
     this.limit = Math.exp(-mean)
@@ -557,14 +603,20 @@ class RNG {
 interface Computed {
   dailyForeign: number
   dailyTests: number
+  inactivityPenalty: number
   infectionRisk: number[]
+  installForeign: number
+  installOwn: number
+  riskFactor: number
   traceDays: number
+  unitToken: number
 }
 
 class Simulation {
   cfg: Config
   clusters: Cluster[]
   computed: Computed
+  counts: Map<number, number>[]
   day: number
   graph: Graph
   households: Household[]
@@ -574,6 +626,7 @@ class Simulation {
   presentPrev: number[][]
   privateClusters: number[]
   publicClusters: number[]
+  recentInfections: number[]
   rng: RNG
   rngApp: RNG
   testQueue: number[]
@@ -581,12 +634,14 @@ class Simulation {
 
   constructor(cfg: Config) {
     this.cfg = cfg
+    this.counts = [new Map(), new Map(), new Map()]
+    this.recentInfections = []
     this.testQueue = []
   }
 
   init() {
     const cfg = this.cfg
-    const rng = new RNG("init")
+    const rng = new RNG(`init`)
     // Generate people with custom attributes.
     const people: Person[] = []
     let personID = 0
@@ -716,11 +771,24 @@ class Simulation {
         cfg.illness.max +
         1
     }
+    const meanContacts =
+      getMean(cfg.clusterCount) * getMean(cfg.clusterSize) +
+      getMean(cfg.groupSize) *
+        CLUSTER_PERIODS *
+        traceDays *
+        cfg.foreignClusterVisit
     this.computed = {
       dailyForeign: cfg.foreignImports / cfg.days,
       dailyTests: Math.round(cfg.dailyTestCapacity * cfg.population),
+      inactivityPenalty: 100 / traceDays,
       infectionRisk,
+      installForeign: cfg.installForeign / cfg.days,
+      installOwn: cfg.installOwn / cfg.days,
+      riskFactor: 1 / cfg.infectionRisk,
       traceDays,
+      unitToken:
+        (cfg.initialTokens / (meanContacts * meanContacts)) *
+        (1 / cfg.infectionRisk),
     }
     // Create graph and visualisation.
     if (IN_BROWSER) {
@@ -730,7 +798,7 @@ class Simulation {
       currentViz = this.viz
     }
     this.rng = rng
-    this.rngApp = new RNG("app")
+    this.rngApp = new RNG(`app`)
   }
 
   next() {
@@ -757,6 +825,7 @@ class Simulation {
     const isolationEnd = day + cfg.isolationDays
     const people = this.people
     const rng = this.rng
+    const rngApp = this.rngApp
     for (let i = 0; i < cfg.population; i++) {
       const person = people[i]
       // Update the status of infected people.
@@ -807,19 +876,26 @@ class Simulation {
         person.isolationEndDay = 0
         person.status &= ~STATUS_ISOLATED
       }
+      // If the individual was prompted to consider the app, see if they'll
+      // install it.
+      if ((person.attrs & PERSON_APP_OWN_CLUSTER) !== 0) {
+        if (rngApp.next() <= computed.installOwn) {
+          person.attrs &= ~PERSON_APP_OWN_CLUSTER
+          person.installSafetyScore(day)
+        }
+      } else if ((person.attrs & PERSON_APP_FOREIGN_CLUSTER) !== 0) {
+        if (rngApp.next() <= computed.installForeign) {
+          person.attrs &= ~PERSON_APP_FOREIGN_CLUSTER
+          person.installSafetyScore(day)
+        }
+      }
     }
-    // NOTE(tav): Make sure the number of calls to rng.next() are the same in
-    // each branch.
     const queue = this.testQueue
-    const rngApp = this.rngApp
-    if (cfg.traceMethod === TRACE_NONE) {
-      const a = 2
-    } else if (cfg.traceMethod === TRACE_APPLE_GOOGLE) {
+    if (cfg.traceMethod === TRACE_APPLE_GOOGLE) {
       // Follow the Apple/Google Exposure Notification method where contacts of
       // infected individuals are notified.
       const seen = new Set()
-      console.log(cfg.dailyTestCapacity)
-      for (let j = 0; j < computed.dailyTests && queue.length > 0; j++) {
+      for (let i = 0; i < computed.dailyTests && queue.length > 0; i++) {
         const id = queue.shift() as number
         const person = people[id]
         if (person.infected()) {
@@ -828,7 +904,6 @@ class Simulation {
           // Notify their contacts.
           if (person.appInstalled()) {
             for (const contacts of person.contacts) {
-              // console.log(contacts.length)
               for (const id of contacts) {
                 if (seen.has(id)) {
                   continue
@@ -837,13 +912,10 @@ class Simulation {
                 // Prompt the contact to get tested.
                 if (contact.testDay === 0 && rngApp.next() <= cfg.testing) {
                   contact.testDay = day + cfg.testDelay.sample(rng)
-                  // console.log()
                 }
                 // Prompt the contact to self-isolate.
                 if (rngApp.next() < cfg.selfIsolation) {
                   contact.isolate(isolationEnd)
-                } else {
-                  // console.log("not isolated")
                 }
                 seen.add(id)
               }
@@ -857,10 +929,7 @@ class Simulation {
         }
         person.testDay = 0
       }
-    } else if (cfg.traceMethod === TRACE_SAFETYSCORE) {
-    }
-    // Remove old contacts and re-use cleared Array for upcoming contacts.
-    if (cfg.traceMethod !== TRACE_NONE) {
+      // Remove old contacts and re-use cleared Array for upcoming contacts.
       for (let i = 0; i < cfg.population; i++) {
         const person = people[i]
         if (person.status !== STATUS_DEAD && person.appInstalled()) {
@@ -873,6 +942,96 @@ class Simulation {
           }
         }
       }
+    } else if (cfg.traceMethod === TRACE_SAFETYSCORE) {
+      const counts = this.counts
+      const inactivityPenalty = computed.inactivityPenalty
+      const traceDays = computed.traceDays
+      const unitToken = computed.unitToken
+      // Work out the recent average infections.
+      let total = 0
+      for (const infections of this.recentInfections) {
+        total += infections
+      }
+      let avg
+      if (this.recentInfections.length === 0) {
+        avg = 1
+      } else {
+        avg = total / this.recentInfections.length
+        if (avg < 1) {
+          avg = 1
+        }
+      }
+      // let adjust = Math.max(0.9, Math.log(avg))
+      let adjust = 0.9
+      let riskFactor = computed.riskFactor / (avg * adjust)
+      // Handle test results.
+      let infections = 0
+      for (let i = 0; i < computed.dailyTests && queue.length > 0; i++) {
+        const id = queue.shift() as number
+        const person = people[id]
+        infections++
+        if (person.infected()) {
+          person.isolate(isolationEnd)
+          if (person.appInstalled()) {
+            person.deposit(cfg.initialTokens, -1, 0, counts, people, unitToken)
+          } else {
+            // TODO(tav): negative tests
+          }
+        }
+        person.testDay = 0
+      }
+      const window =
+        2 * (cfg.preInfectiousDays + cfg.preSymptomaticInfectiousDays)
+      if (this.recentInfections.length >= window) {
+        this.recentInfections.shift()
+      }
+      this.recentInfections.push(infections)
+      for (let i = 0; i < cfg.population; i++) {
+        const person = people[i]
+        if (person.status === STATUS_DEAD || !person.appInstalled()) {
+          continue
+        }
+        // Update the SafetyScore of everyone who has the app installed.
+        let tokens = 0
+        for (const account of person.tokens) {
+          tokens += account[0]
+        }
+        let score =
+          100 - Math.min((tokens * 100) / (unitToken * riskFactor), 100)
+        const active = Math.min(day - person.installDate)
+        if (active < traceDays) {
+          score -= (traceDays - active) * inactivityPenalty
+        }
+        person.score = score
+        // Self-isolate if score is too low.
+        if (score <= cfg.isolationThreshold) {
+          person.isolationEndDay = -1
+          person.status |= STATUS_ISOLATED
+        } else if (
+          (person.status & STATUS_ISOLATED) !== 0 &&
+          person.isolationEndDay === -1
+        ) {
+          person.isolationEndDay = 0
+          person.status &= ~STATUS_ISOLATED
+        }
+        // Remove old contacts.
+        if (person.contacts.length === computed.traceDays) {
+          const first = person.contacts.shift() as number[]
+          first.length = 0
+          person.contacts.push(first)
+        } else {
+          person.contacts.push([])
+        }
+        // Remove old daily accounts.
+        if (person.tokens.length === computed.traceDays) {
+          const first = person.tokens.shift() as number[]
+          first[0] = 0
+          first[1] = 0
+          person.tokens.push(first)
+        } else {
+          person.tokens.push([0, 0])
+        }
+      }
     }
     // Generate the daily stats.
     const stats = {
@@ -880,10 +1039,10 @@ class Simulation {
       healthy: 0,
       immune: 0,
       infected: 0,
+      installed: 0,
       isolated: 0,
       recovered: 0,
     }
-    let infectedBy = 0
     for (let i = 0; i < cfg.population; i++) {
       const person = people[i]
       const status = person.status
@@ -902,7 +1061,11 @@ class Simulation {
       if ((status & STATUS_ISOLATED) !== 0) {
         stats.isolated++
       }
+      if ((person.attrs & PERSON_APP_INSTALLED) !== 0) {
+        stats.installed++
+      }
     }
+    console.log(stats.installed)
     // Update output.
     if (IN_BROWSER) {
       this.viz.draw(people)
@@ -922,8 +1085,11 @@ class Simulation {
       this.period = 0
     }
     const cfg = this.cfg
+    const clusters = this.clusters
+    const traceMethod = cfg.traceMethod
     const people = this.people
     const rng = this.rng
+    const rngApp = this.rngApp
     const present = this.presentNow
     for (let i = 0; i < cfg.population; i++) {
       const person = people[i]
@@ -939,17 +1105,40 @@ class Simulation {
         }
       }
       // Select a cluster for the person to visit.
-      let cluster
+      let clusterID
+      let foreign = true
       if (rng.next() <= cfg.foreignClusterVisit) {
         if (rng.next() <= cfg.publicClusterVisit) {
-          cluster = Math.floor(rng.next() * this.publicClusters.length)
+          clusterID = Math.floor(rng.next() * this.publicClusters.length)
         } else {
-          cluster = Math.floor(rng.next() * this.privateClusters.length)
+          clusterID = Math.floor(rng.next() * this.privateClusters.length)
         }
       } else {
-        cluster = Math.floor(rng.next() * person.clusters.length)
+        clusterID = Math.floor(rng.next() * person.clusters.length)
+        foreign = false
       }
-      present[cluster].push(person.id)
+      if (traceMethod === TRACE_SAFETYSCORE) {
+        const cluster = clusters[clusterID]
+        // Handle a gate-kept cluster.
+        if ((cluster.attrs & CLUSTER_GATEKEPT) !== 0) {
+          // If the user doesn't have the app installed, see if they will
+          // consider it.
+          if ((person.attrs & PERSON_APP_INSTALLED) === 0) {
+            if (foreign) {
+              person.attrs |= PERSON_APP_FOREIGN_CLUSTER
+            } else {
+              person.attrs |= PERSON_APP_OWN_CLUSTER
+            }
+            continue
+          }
+          // If they do have the app, check if their score meets the necessary
+          // level.
+          if (person.score <= cfg.gatekeptThreshold) {
+            continue
+          }
+        }
+      }
+      present[clusterID].push(person.id)
     }
     const day = this.day
     const group = []
@@ -1242,7 +1431,7 @@ function $(id: string) {
 function defaultConfig(): CustomConfig {
   return {
     // the portion of people who have the app installed at the start
-    appInstalled: 0.4,
+    appInstalled: 1 / 3,
     // distribution of the number of clusters for a person
     clusterCount: new ZipfDistribution(1, 20),
     // distribution of the number of "primary" members in a cluster
@@ -1250,15 +1439,15 @@ function defaultConfig(): CustomConfig {
     // the portion of the population that can be tested
     dailyTestCapacity: 0.005,
     // number of days to run the simulation
-    days: 150,
+    days: 365,
     // likelihood of dying once infected
     fatalityRisk: 0.01,
     // likelihood of visiting a "foreign" cluster during a period
-    foreignClusterVisit: 0.4,
+    foreignClusterVisit: 0.2,
     // likelihood of infection from outside the population
-    foreignImports: 0.003,
+    foreignImports: 0.001,
     // the portion of clusters who gate-keep access via SafetyScore
-    gatekeptClusters: 0.4,
+    gatekeptClusters: 1 / 3,
     // the SafetyScore level needed to access a gate-kept cluster
     gatekeptThreshold: 50,
     // distribution of the group size within a cluster for a single period
@@ -1273,13 +1462,15 @@ function defaultConfig(): CustomConfig {
     initialTokens: 10000,
     // likelihood of someone getting infected during a single contact
     infectionRisk: 0.01,
-    // likelihood of someone installing SafetyScore for visiting a gate-kept cluster
-    install: 0.8,
+    // likelihood of someone installing SafetyScore for visiting a foreign gate-kept cluster
+    installForeign: 0.65,
+    // likelihood of someone installing SafetyScore for visiting an own gate-kept cluster
+    installOwn: 0.95,
     // likelihood of a self-isolating person staying at home for any given period during the day
     isolation: 0.9,
     // number of days a person should self-isolate
     isolationDays: 21,
-    // the SafetyScore level below which one is notified to self-isolate
+    // the SafetyScore level below which one is notified to self-isolate and test
     isolationThreshold: 50,
     // total number of people
     population: 10000,
@@ -1288,7 +1479,7 @@ function defaultConfig(): CustomConfig {
     // number of days of being infectious before possibly becoming symptomatic
     preSymptomaticInfectiousDays: 3,
     // likelihood of visiting a public cluster when visiting a foreign cluster
-    publicClusterVisit: 0.2,
+    publicClusterVisit: 0.15,
     // portion of clusters which are public
     publicClusters: 0.15,
     // use sampling to speed up what's shown in the visualisation
@@ -1297,14 +1488,14 @@ function defaultConfig(): CustomConfig {
     selfAttestation: 0.5,
     // relative weight of viral tokens from a self-attestation
     selfAttestationWeight: 0.1,
-    // likelihood of a notified person self-isolation
-    selfIsolation: 0.5,
+    // likelihood of a notified person self-isolating
+    selfIsolation: 0.9,
     // the portion of people who become symptomatic
-    symptomatic: 0.2,
+    symptomatic: 0.3,
     // the distribution of the delay days between symptomatic/notified and testing
     testDelay: new PoissonDistribution(2, 1, 10),
     // likelihood of a person getting themselves tested if symptomatic/notified
-    testing: 0.5,
+    testing: 0.7,
   }
 }
 
@@ -1395,6 +1586,15 @@ function getConfig(): Config {
     }
   }
   return currentConfig
+}
+
+function getMean(dist: Distribution) {
+  const rng = new RNG("mean")
+  let val = 0
+  for (let i = 0; i < 10000; i++) {
+    val += dist.sample(rng)
+  }
+  return val / 10000
 }
 
 function getTraceMethod(s: string) {

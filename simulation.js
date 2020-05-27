@@ -10,14 +10,43 @@ var __assign = (this && this.__assign) || function () {
     };
     return __assign.apply(this, arguments);
 };
+var __values = (this && this.__values) || function(o) {
+    var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+    if (m) return m.call(o);
+    if (o && typeof o.length === "number") return {
+        next: function () {
+            if (o && i >= o.length) o = void 0;
+            return { value: o && o[i++], done: !o };
+        }
+    };
+    throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+};
+var __read = (this && this.__read) || function (o, n) {
+    var m = typeof Symbol === "function" && o[Symbol.iterator];
+    if (!m) return o;
+    var i = m.call(o), r, ar = [], e;
+    try {
+        while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+    }
+    catch (error) { e = { error: error }; }
+    finally {
+        try {
+            if (r && !r.done && (m = i["return"])) m.call(i);
+        }
+        finally { if (e) throw e.error; }
+    }
+    return ar;
+};
 // Determine host environment.
 var IN_BROWSER = typeof window !== "undefined";
 // Attribute values for clusters.
 var CLUSTER_GATEKEPT = 1;
 var CLUSTER_PUBLIC = 2;
 // Attribute values for people.
-var PERSON_APP_INSTALLED = 1;
-var PERSON_SYMPTOMATIC = 2;
+var PERSON_APP_FOREIGN_CLUSTER = 1;
+var PERSON_APP_INSTALLED = 2;
+var PERSON_APP_OWN_CLUSTER = 4;
+var PERSON_SYMPTOMATIC = 8;
 // Constants relating to the visualisations.
 var CLUSTER_HEIGHT = 24;
 var CLUSTER_PADDING = 6;
@@ -147,14 +176,16 @@ var Graph = /** @class */ (function () {
         ctx.imageSmoothingEnabled = false;
         var elems = [
             $("day"),
+            $("dead"),
             $("recovered"),
             $("healthy"),
             $("infected"),
             $("isolated"),
         ];
-        elems[1].style.color = COLOUR_RECOVERED;
-        elems[2].style.color = COLOUR_HEALTHY;
-        elems[3].style.color = COLOUR_INFECTED;
+        elems[1].style.color = COLOUR_DEAD;
+        elems[2].style.color = COLOUR_RECOVERED;
+        elems[3].style.color = COLOUR_HEALTHY;
+        elems[4].style.color = COLOUR_INFECTED;
         this.$ = elems;
         this.canvas = canvas;
         this.cfg = cfg;
@@ -237,10 +268,11 @@ var Graph = /** @class */ (function () {
         this.values.push(values);
         var day = this.values.length - 1;
         $[0].innerText = day.toString();
-        $[1].innerText = stats.recovered.toString();
-        $[2].innerText = stats.healthy.toString();
-        $[3].innerText = stats.infected.toString();
-        $[4].innerText = stats.isolated.toString();
+        $[1].innerText = stats.dead.toString();
+        $[2].innerText = stats.recovered.toString();
+        $[3].innerText = stats.healthy.toString();
+        $[4].innerText = stats.infected.toString();
+        $[5].innerText = stats.isolated.toString();
         this.draw(day);
     };
     return Graph;
@@ -285,13 +317,81 @@ var Person = /** @class */ (function () {
         this.immunityEndDay = 0;
         this.installDate = 0;
         this.isolationEndDay = 0;
+        this.score = 0;
         this.sim = sim;
         this.spread = 0;
         this.status = STATUS_HEALTHY;
         this.testDay = 0;
+        this.tokens = [];
     }
     Person.prototype.appInstalled = function () {
         return (this.attrs & PERSON_APP_INSTALLED) !== 0;
+    };
+    // NOTE(tav): We simplify the calculations and deposit the tokens in just the
+    // current daily account.
+    Person.prototype.deposit = function (tokens, from, depth, counts, people, unitToken) {
+        var e_1, _a, e_2, _b, e_3, _c;
+        if (this.status === STATUS_DEAD) {
+            return;
+        }
+        this.tokens[this.tokens.length - 1][0] += tokens;
+        if (depth === 2) {
+            return;
+        }
+        var count = counts[depth];
+        count.clear();
+        var total = 0;
+        try {
+            for (var _d = __values(this.contacts), _e = _d.next(); !_e.done; _e = _d.next()) {
+                var contacts = _e.value;
+                try {
+                    for (var contacts_1 = (e_2 = void 0, __values(contacts)), contacts_1_1 = contacts_1.next(); !contacts_1_1.done; contacts_1_1 = contacts_1.next()) {
+                        var id = contacts_1_1.value;
+                        if (count.has(id)) {
+                            count.set(id, count.get(id) + 1);
+                        }
+                        else {
+                            count.set(id, 1);
+                        }
+                        total++;
+                    }
+                }
+                catch (e_2_1) { e_2 = { error: e_2_1 }; }
+                finally {
+                    try {
+                        if (contacts_1_1 && !contacts_1_1.done && (_b = contacts_1.return)) _b.call(contacts_1);
+                    }
+                    finally { if (e_2) throw e_2.error; }
+                }
+            }
+        }
+        catch (e_1_1) { e_1 = { error: e_1_1 }; }
+        finally {
+            try {
+                if (_e && !_e.done && (_a = _d.return)) _a.call(_d);
+            }
+            finally { if (e_1) throw e_1.error; }
+        }
+        var cdepth = depth + 1;
+        var units = tokens / total;
+        try {
+            for (var count_1 = __values(count), count_1_1 = count_1.next(); !count_1_1.done; count_1_1 = count_1.next()) {
+                var _f = __read(count_1_1.value, 2), id = _f[0], tally = _f[1];
+                var amount = tally * units;
+                if (amount < unitToken) {
+                    continue;
+                }
+                var person = people[id];
+                person.deposit(amount, this.id, cdepth, counts, people, unitToken);
+            }
+        }
+        catch (e_3_1) { e_3 = { error: e_3_1 }; }
+        finally {
+            try {
+                if (count_1_1 && !count_1_1.done && (_c = count_1.return)) _c.call(count_1);
+            }
+            finally { if (e_3) throw e_3.error; }
+        }
     };
     Person.prototype.infect = function (today, gen) {
         if ((this.status & STATUS_INFECTED) !== 0) {
@@ -321,8 +421,10 @@ var Person = /** @class */ (function () {
     Person.prototype.infected = function () {
         return (this.status & STATUS_INFECTED) !== 0;
     };
-    Person.prototype.installApp = function () {
+    Person.prototype.installSafetyScore = function (day) {
         this.attrs |= PERSON_APP_INSTALLED;
+        this.installDate = day;
+        this.tokens.push([0, 0]);
     };
     Person.prototype.isolate = function (end) {
         if (this.status === STATUS_DEAD) {
@@ -331,14 +433,8 @@ var Person = /** @class */ (function () {
         this.isolationEndDay = end;
         this.status |= STATUS_ISOLATED;
     };
-    Person.prototype.notInfected = function () {
-        return (this.status & STATUS_INFECTED) === 0;
-    };
     Person.prototype.symptomatic = function () {
         return (this.attrs & PERSON_SYMPTOMATIC) !== 0;
-    };
-    Person.prototype.updateStatus = function () {
-        return (this.status & STATUS_INFECTED) !== 0;
     };
     return Person;
 }());
@@ -419,6 +515,8 @@ var RNG = /** @class */ (function () {
 var Simulation = /** @class */ (function () {
     function Simulation(cfg) {
         this.cfg = cfg;
+        this.counts = [new Map(), new Map(), new Map()];
+        this.recentInfections = [];
         this.testQueue = [];
     }
     Simulation.prototype.init = function () {
@@ -555,11 +653,22 @@ var Simulation = /** @class */ (function () {
                     cfg.illness.max +
                     1;
         }
+        var meanContacts = getMean(cfg.clusterCount) * getMean(cfg.clusterSize) +
+            getMean(cfg.groupSize) *
+                CLUSTER_PERIODS *
+                traceDays *
+                cfg.foreignClusterVisit;
         this.computed = {
             dailyForeign: cfg.foreignImports / cfg.days,
             dailyTests: Math.round(cfg.dailyTestCapacity * cfg.population),
+            inactivityPenalty: 100 / traceDays,
             infectionRisk: infectionRisk,
+            installForeign: cfg.installForeign / cfg.days,
+            installOwn: cfg.installOwn / cfg.days,
+            riskFactor: 1 / cfg.infectionRisk,
             traceDays: traceDays,
+            unitToken: (cfg.initialTokens / (meanContacts * meanContacts)) *
+                (1 / cfg.infectionRisk),
         };
         // Create graph and visualisation.
         if (IN_BROWSER) {
@@ -587,6 +696,7 @@ var Simulation = /** @class */ (function () {
         this.queueNext();
     };
     Simulation.prototype.nextDay = function () {
+        var e_4, _a, e_5, _b, e_6, _c, e_7, _d;
         this.day++;
         var cfg = this.cfg;
         var computed = this.computed;
@@ -594,6 +704,7 @@ var Simulation = /** @class */ (function () {
         var isolationEnd = day + cfg.isolationDays;
         var people = this.people;
         var rng = this.rng;
+        var rngApp = this.rngApp;
         for (var i = 0; i < cfg.population; i++) {
             var person = people[i];
             // Update the status of infected people.
@@ -643,20 +754,27 @@ var Simulation = /** @class */ (function () {
                 person.isolationEndDay = 0;
                 person.status &= ~STATUS_ISOLATED;
             }
+            // If the individual was prompted to consider the app, see if they'll
+            // install it.
+            if ((person.attrs & PERSON_APP_OWN_CLUSTER) !== 0) {
+                if (rngApp.next() <= computed.installOwn) {
+                    person.attrs &= ~PERSON_APP_OWN_CLUSTER;
+                    person.installSafetyScore(day);
+                }
+            }
+            else if ((person.attrs & PERSON_APP_FOREIGN_CLUSTER) !== 0) {
+                if (rngApp.next() <= computed.installForeign) {
+                    person.attrs &= ~PERSON_APP_FOREIGN_CLUSTER;
+                    person.installSafetyScore(day);
+                }
+            }
         }
-        // NOTE(tav): Make sure the number of calls to rng.next() are the same in
-        // each branch.
         var queue = this.testQueue;
-        var rngApp = this.rngApp;
-        if (cfg.traceMethod === TRACE_NONE) {
-            var a = 2;
-        }
-        else if (cfg.traceMethod === TRACE_APPLE_GOOGLE) {
+        if (cfg.traceMethod === TRACE_APPLE_GOOGLE) {
             // Follow the Apple/Google Exposure Notification method where contacts of
             // infected individuals are notified.
             var seen = new Set();
-            console.log(cfg.dailyTestCapacity);
-            for (var j = 0; j < computed.dailyTests && queue.length > 0; j++) {
+            for (var i = 0; i < computed.dailyTests && queue.length > 0; i++) {
                 var id = queue.shift();
                 var person = people[id];
                 if (person.infected()) {
@@ -664,29 +782,42 @@ var Simulation = /** @class */ (function () {
                     person.isolate(isolationEnd);
                     // Notify their contacts.
                     if (person.appInstalled()) {
-                        for (var _i = 0, _a = person.contacts; _i < _a.length; _i++) {
-                            var contacts = _a[_i];
-                            // console.log(contacts.length)
-                            for (var _b = 0, contacts_1 = contacts; _b < contacts_1.length; _b++) {
-                                var id_1 = contacts_1[_b];
-                                if (seen.has(id_1)) {
-                                    continue;
+                        try {
+                            for (var _e = (e_4 = void 0, __values(person.contacts)), _f = _e.next(); !_f.done; _f = _e.next()) {
+                                var contacts = _f.value;
+                                try {
+                                    for (var contacts_2 = (e_5 = void 0, __values(contacts)), contacts_2_1 = contacts_2.next(); !contacts_2_1.done; contacts_2_1 = contacts_2.next()) {
+                                        var id_1 = contacts_2_1.value;
+                                        if (seen.has(id_1)) {
+                                            continue;
+                                        }
+                                        var contact = people[id_1];
+                                        // Prompt the contact to get tested.
+                                        if (contact.testDay === 0 && rngApp.next() <= cfg.testing) {
+                                            contact.testDay = day + cfg.testDelay.sample(rng);
+                                        }
+                                        // Prompt the contact to self-isolate.
+                                        if (rngApp.next() < cfg.selfIsolation) {
+                                            contact.isolate(isolationEnd);
+                                        }
+                                        seen.add(id_1);
+                                    }
                                 }
-                                var contact = people[id_1];
-                                // Prompt the contact to get tested.
-                                if (contact.testDay === 0 && rngApp.next() <= cfg.testing) {
-                                    contact.testDay = day + cfg.testDelay.sample(rng);
-                                    // console.log()
+                                catch (e_5_1) { e_5 = { error: e_5_1 }; }
+                                finally {
+                                    try {
+                                        if (contacts_2_1 && !contacts_2_1.done && (_b = contacts_2.return)) _b.call(contacts_2);
+                                    }
+                                    finally { if (e_5) throw e_5.error; }
                                 }
-                                // Prompt the contact to self-isolate.
-                                if (rngApp.next() < cfg.selfIsolation) {
-                                    contact.isolate(isolationEnd);
-                                }
-                                else {
-                                    // console.log("not isolated")
-                                }
-                                seen.add(id_1);
                             }
+                        }
+                        catch (e_4_1) { e_4 = { error: e_4_1 }; }
+                        finally {
+                            try {
+                                if (_f && !_f.done && (_a = _e.return)) _a.call(_e);
+                            }
+                            finally { if (e_4) throw e_4.error; }
                         }
                     }
                 }
@@ -698,11 +829,7 @@ var Simulation = /** @class */ (function () {
                 }
                 person.testDay = 0;
             }
-        }
-        else if (cfg.traceMethod === TRACE_SAFETYSCORE) {
-        }
-        // Remove old contacts and re-use cleared Array for upcoming contacts.
-        if (cfg.traceMethod !== TRACE_NONE) {
+            // Remove old contacts and re-use cleared Array for upcoming contacts.
             for (var i = 0; i < cfg.population; i++) {
                 var person = people[i];
                 if (person.status !== STATUS_DEAD && person.appInstalled()) {
@@ -717,16 +844,128 @@ var Simulation = /** @class */ (function () {
                 }
             }
         }
+        else if (cfg.traceMethod === TRACE_SAFETYSCORE) {
+            var counts = this.counts;
+            var inactivityPenalty = computed.inactivityPenalty;
+            var traceDays = computed.traceDays;
+            var unitToken = computed.unitToken;
+            // Work out the recent average infections.
+            var total = 0;
+            try {
+                for (var _g = __values(this.recentInfections), _h = _g.next(); !_h.done; _h = _g.next()) {
+                    var infections_1 = _h.value;
+                    total += infections_1;
+                }
+            }
+            catch (e_6_1) { e_6 = { error: e_6_1 }; }
+            finally {
+                try {
+                    if (_h && !_h.done && (_c = _g.return)) _c.call(_g);
+                }
+                finally { if (e_6) throw e_6.error; }
+            }
+            var avg = void 0;
+            if (this.recentInfections.length === 0) {
+                avg = 1;
+            }
+            else {
+                avg = total / this.recentInfections.length;
+                if (avg < 1) {
+                    avg = 1;
+                }
+            }
+            // let adjust = Math.max(0.9, Math.log(avg))
+            var adjust = 0.9;
+            var riskFactor = computed.riskFactor / (avg * adjust);
+            // Handle test results.
+            var infections = 0;
+            for (var i = 0; i < computed.dailyTests && queue.length > 0; i++) {
+                var id = queue.shift();
+                var person = people[id];
+                infections++;
+                if (person.infected()) {
+                    person.isolate(isolationEnd);
+                    if (person.appInstalled()) {
+                        person.deposit(cfg.initialTokens, -1, 0, counts, people, unitToken);
+                    }
+                    else {
+                        // TODO(tav): negative tests
+                    }
+                }
+                person.testDay = 0;
+            }
+            var window_1 = 2 * (cfg.preInfectiousDays + cfg.preSymptomaticInfectiousDays);
+            if (this.recentInfections.length >= window_1) {
+                this.recentInfections.shift();
+            }
+            this.recentInfections.push(infections);
+            for (var i = 0; i < cfg.population; i++) {
+                var person = people[i];
+                if (person.status === STATUS_DEAD || !person.appInstalled()) {
+                    continue;
+                }
+                // Update the SafetyScore of everyone who has the app installed.
+                var tokens = 0;
+                try {
+                    for (var _j = (e_7 = void 0, __values(person.tokens)), _k = _j.next(); !_k.done; _k = _j.next()) {
+                        var account = _k.value;
+                        tokens += account[0];
+                    }
+                }
+                catch (e_7_1) { e_7 = { error: e_7_1 }; }
+                finally {
+                    try {
+                        if (_k && !_k.done && (_d = _j.return)) _d.call(_j);
+                    }
+                    finally { if (e_7) throw e_7.error; }
+                }
+                var score = 100 - Math.min((tokens * 100) / (unitToken * riskFactor), 100);
+                var active = Math.min(day - person.installDate);
+                if (active < traceDays) {
+                    score -= (traceDays - active) * inactivityPenalty;
+                }
+                person.score = score;
+                // Self-isolate if score is too low.
+                if (score <= cfg.isolationThreshold) {
+                    person.isolationEndDay = -1;
+                    person.status |= STATUS_ISOLATED;
+                }
+                else if ((person.status & STATUS_ISOLATED) !== 0 &&
+                    person.isolationEndDay === -1) {
+                    person.isolationEndDay = 0;
+                    person.status &= ~STATUS_ISOLATED;
+                }
+                // Remove old contacts.
+                if (person.contacts.length === computed.traceDays) {
+                    var first = person.contacts.shift();
+                    first.length = 0;
+                    person.contacts.push(first);
+                }
+                else {
+                    person.contacts.push([]);
+                }
+                // Remove old daily accounts.
+                if (person.tokens.length === computed.traceDays) {
+                    var first = person.tokens.shift();
+                    first[0] = 0;
+                    first[1] = 0;
+                    person.tokens.push(first);
+                }
+                else {
+                    person.tokens.push([0, 0]);
+                }
+            }
+        }
         // Generate the daily stats.
         var stats = {
             dead: 0,
             healthy: 0,
             immune: 0,
             infected: 0,
+            installed: 0,
             isolated: 0,
             recovered: 0,
         };
-        var infectedBy = 0;
         for (var i = 0; i < cfg.population; i++) {
             var person = people[i];
             var status_1 = person.status;
@@ -748,7 +987,11 @@ var Simulation = /** @class */ (function () {
             if ((status_1 & STATUS_ISOLATED) !== 0) {
                 stats.isolated++;
             }
+            if ((person.attrs & PERSON_APP_INSTALLED) !== 0) {
+                stats.installed++;
+            }
         }
+        console.log(stats.installed);
         // Update output.
         if (IN_BROWSER) {
             this.viz.draw(people);
@@ -769,8 +1012,11 @@ var Simulation = /** @class */ (function () {
             this.period = 0;
         }
         var cfg = this.cfg;
+        var clusters = this.clusters;
+        var traceMethod = cfg.traceMethod;
         var people = this.people;
         var rng = this.rng;
+        var rngApp = this.rngApp;
         var present = this.presentNow;
         for (var i = 0; i < cfg.population; i++) {
             var person = people[i];
@@ -786,19 +1032,43 @@ var Simulation = /** @class */ (function () {
                 }
             }
             // Select a cluster for the person to visit.
-            var cluster = void 0;
+            var clusterID = void 0;
+            var foreign = true;
             if (rng.next() <= cfg.foreignClusterVisit) {
                 if (rng.next() <= cfg.publicClusterVisit) {
-                    cluster = Math.floor(rng.next() * this.publicClusters.length);
+                    clusterID = Math.floor(rng.next() * this.publicClusters.length);
                 }
                 else {
-                    cluster = Math.floor(rng.next() * this.privateClusters.length);
+                    clusterID = Math.floor(rng.next() * this.privateClusters.length);
                 }
             }
             else {
-                cluster = Math.floor(rng.next() * person.clusters.length);
+                clusterID = Math.floor(rng.next() * person.clusters.length);
+                foreign = false;
             }
-            present[cluster].push(person.id);
+            if (traceMethod === TRACE_SAFETYSCORE) {
+                var cluster = clusters[clusterID];
+                // Handle a gate-kept cluster.
+                if ((cluster.attrs & CLUSTER_GATEKEPT) !== 0) {
+                    // If the user doesn't have the app installed, see if they will
+                    // consider it.
+                    if ((person.attrs & PERSON_APP_INSTALLED) === 0) {
+                        if (foreign) {
+                            person.attrs |= PERSON_APP_FOREIGN_CLUSTER;
+                        }
+                        else {
+                            person.attrs |= PERSON_APP_OWN_CLUSTER;
+                        }
+                        continue;
+                    }
+                    // If they do have the app, check if their score meets the necessary
+                    // level.
+                    if (person.score <= cfg.gatekeptThreshold) {
+                        continue;
+                    }
+                }
+            }
+            present[clusterID].push(person.id);
         }
         var day = this.day;
         var group = [];
@@ -1074,7 +1344,7 @@ function $(id) {
 function defaultConfig() {
     return {
         // the portion of people who have the app installed at the start
-        appInstalled: 0.4,
+        appInstalled: 1 / 3,
         // distribution of the number of clusters for a person
         clusterCount: new ZipfDistribution(1, 20),
         // distribution of the number of "primary" members in a cluster
@@ -1082,15 +1352,15 @@ function defaultConfig() {
         // the portion of the population that can be tested
         dailyTestCapacity: 0.005,
         // number of days to run the simulation
-        days: 150,
+        days: 365,
         // likelihood of dying once infected
         fatalityRisk: 0.01,
         // likelihood of visiting a "foreign" cluster during a period
-        foreignClusterVisit: 0.4,
+        foreignClusterVisit: 0.2,
         // likelihood of infection from outside the population
-        foreignImports: 0.003,
+        foreignImports: 0.001,
         // the portion of clusters who gate-keep access via SafetyScore
-        gatekeptClusters: 0.4,
+        gatekeptClusters: 1 / 3,
         // the SafetyScore level needed to access a gate-kept cluster
         gatekeptThreshold: 50,
         // distribution of the group size within a cluster for a single period
@@ -1105,13 +1375,15 @@ function defaultConfig() {
         initialTokens: 10000,
         // likelihood of someone getting infected during a single contact
         infectionRisk: 0.01,
-        // likelihood of someone installing SafetyScore for visiting a gate-kept cluster
-        install: 0.8,
+        // likelihood of someone installing SafetyScore for visiting a foreign gate-kept cluster
+        installForeign: 0.65,
+        // likelihood of someone installing SafetyScore for visiting an own gate-kept cluster
+        installOwn: 0.95,
         // likelihood of a self-isolating person staying at home for any given period during the day
         isolation: 0.9,
         // number of days a person should self-isolate
         isolationDays: 21,
-        // the SafetyScore level below which one is notified to self-isolate
+        // the SafetyScore level below which one is notified to self-isolate and test
         isolationThreshold: 50,
         // total number of people
         population: 10000,
@@ -1120,7 +1392,7 @@ function defaultConfig() {
         // number of days of being infectious before possibly becoming symptomatic
         preSymptomaticInfectiousDays: 3,
         // likelihood of visiting a public cluster when visiting a foreign cluster
-        publicClusterVisit: 0.2,
+        publicClusterVisit: 0.15,
         // portion of clusters which are public
         publicClusters: 0.15,
         // use sampling to speed up what's shown in the visualisation
@@ -1129,14 +1401,14 @@ function defaultConfig() {
         selfAttestation: 0.5,
         // relative weight of viral tokens from a self-attestation
         selfAttestationWeight: 0.1,
-        // likelihood of a notified person self-isolation
-        selfIsolation: 0.5,
+        // likelihood of a notified person self-isolating
+        selfIsolation: 0.9,
         // the portion of people who become symptomatic
-        symptomatic: 0.2,
+        symptomatic: 0.3,
         // the distribution of the delay days between symptomatic/notified and testing
         testDelay: new PoissonDistribution(2, 1, 10),
         // likelihood of a person getting themselves tested if symptomatic/notified
-        testing: 0.5,
+        testing: 0.7,
     };
 }
 function defaultConfigDefinition() {
@@ -1217,6 +1489,14 @@ function getConfig() {
         currentConfig = __assign(__assign({}, defaultConfig()), { output: "console", traceMethod: TRACE_NONE });
     }
     return currentConfig;
+}
+function getMean(dist) {
+    var rng = new RNG("mean");
+    var val = 0;
+    for (var i = 0; i < 10000; i++) {
+        val += dist.sample(rng);
+    }
+    return val / 10000;
 }
 function getTraceMethod(s) {
     var traceMethod;
@@ -1311,6 +1591,7 @@ function printBar(infected, recovered, dead, total, width) {
     console.log(line);
 }
 function printDistribution(dist) {
+    var e_8, _a;
     var bins = {};
     var rng = new RNG("dist");
     for (var i = 0; i < 100000; i++) {
@@ -1323,9 +1604,18 @@ function printDistribution(dist) {
         }
     }
     console.log("Value,Count");
-    for (var _i = 0, _a = Object.keys(bins); _i < _a.length; _i++) {
-        var i = _a[_i];
-        console.log(i + "," + bins[i]);
+    try {
+        for (var _b = __values(Object.keys(bins)), _c = _b.next(); !_c.done; _c = _b.next()) {
+            var i = _c.value;
+            console.log(i + "," + bins[i]);
+        }
+    }
+    catch (e_8_1) { e_8 = { error: e_8_1 }; }
+    finally {
+        try {
+            if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+        }
+        finally { if (e_8) throw e_8.error; }
     }
 }
 function runSimulation(cfg) {
@@ -1354,7 +1644,7 @@ function shuffle(array, rng) {
     var _a;
     for (var i = array.length - 1; i > 0; i--) {
         var j = Math.floor(rng.next() * (i + 1));
-        _a = [array[j], array[i]], array[i] = _a[0], array[j] = _a[1];
+        _a = __read([array[j], array[i]], 2), array[i] = _a[0], array[j] = _a[1];
     }
 }
 function syncEditor() {
