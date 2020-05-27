@@ -1,51 +1,47 @@
 // Determine host environment.
 const IN_BROWSER = typeof window !== "undefined"
 
-// Attribute values.
-const ATTR_APP_INSTALLED = 1
-const ATTR_SYMPTOMATIC = 2
+// Attribute values for clusters.
+const CLUSTER_GATEKEPT = 1
+const CLUSTER_PUBLIC = 2
+
+// Attribute values for people.
+const PERSON_APP_INSTALLED = 1
+const PERSON_SYMPTOMATIC = 2
 
 // Constants relating to the visualisations.
 const CLUSTER_HEIGHT = 24
 const CLUSTER_PADDING = 6
 const CLUSTER_WIDTH = 24
+
 const COLOUR_DEAD = "#444444"
 const COLOUR_HEALTHY = "#8bb4b8"
-const COLOUR_IMMUNE = "#009d51"
-// const COLOUR_IMMUNE = "#444444"
 const COLOUR_INFECTED = "#ff3945"
+const COLOUR_RECOVERED = "#009d51"
+
 const VIZ_COLOUR_DEAD = COLOUR_DEAD
 const VIZ_COLOUR_HEALTHY = COLOUR_HEALTHY
-const VIZ_COLOUR_IMMUNE = COLOUR_IMMUNE
 const VIZ_COLOUR_INFECTED = COLOUR_INFECTED
-// const VIZ_COLOUR_DEAD = "#444444"
-// const VIZ_COLOUR_HEALTHY = "#8bb4b8"
-// const VIZ_COLOUR_IMMUNE = "#009d51"
-// const VIZ_COLOUR_INFECTED = "#ff3945"
+const VIZ_COLOUR_RECOVERED = COLOUR_RECOVERED
+
+// const COLOR_IMMUNE = "#b45cff"
 // const VIZ_COLOUR_DEAD = "#dcdcdc"
 // const VIZ_COLOUR_HEALTHY = "#b3e5ea"
 // const VIZ_COLOUR_IMMUNE = "#00fc86"
 // const VIZ_COLOUR_INFECTED = "#ffd1d2"
-const VIZ_PAD = 20
-const VIZ_PAD_2 = 2 * VIZ_PAD
-
-// const COLOR_DEAD = "#444444"
-// const COLOR_HEALTHY = "#009d51"
-// const COLOR_IMMUNE = "#b45cff"
-// const COLOR_INFECTED = "#ff3945"
-// const COLOR_VIZ_HEALTHY = "#8bb4b8"
 
 // Status values.
-const STATUS_HEALTHY = 0
-const STATUS_INFECTED = 1
-const STATUS_CONTAGIOUS = 2
-const STATUS_ISOLATED = 4
-const STATUS_IMMUNE = 8
-const STATUS_DEAD = 16
+const STATUS_HEALTHY = 1
+const STATUS_INFECTED = 2
+const STATUS_CONTAGIOUS = 4
+const STATUS_RECOVERED = 8
+const STATUS_IMMUNE = 16
+const STATUS_DEAD = 32
+const STATUS_ISOLATED = 64
 
 // Trace methods.
 const TRACE_NONE = 0
-const TRACE_FIRST_DEGREE = 1
+const TRACE_APPLE_GOOGLE = 1
 const TRACE_SAFETYSCORE = 2
 
 // Time spent in different environments.
@@ -53,36 +49,42 @@ const CLUSTER_PERIODS = 8
 const HOUSEHOLD_PERIODS = 8
 const TOTAL_PERIODS = CLUSTER_PERIODS + HOUSEHOLD_PERIODS
 
+let configDisplayed = false
 let currentConfig: Config
 let currentConfigDefinition: string
 let currentGraph: Graph
 let currentSim: Simulation
 let currentViz: Visualisation
-let handle: number
-let settingsDisplayed = false
+let handle: ReturnType<typeof setTimeout> | number
+let result: Stats[] = []
 
 let $config: HTMLTextAreaElement
 let $mirror: HTMLPreElement
 
+declare namespace Prism {
+  function highlight(code: string, lang: string): string
+  let languages: Record<string, string>
+}
+
 interface Cluster {
+  attrs: number
   members: number[]
-  public: boolean
   x: number
   y: number
 }
 
 interface Config {
   appInstalled: number
-  cluster: Distribution
-  clusterContact: Distribution
   clusterCount: Distribution
-  clusterVisit: number
+  clusterSize: Distribution
   dailyTestCapacity: number
   days: number
   fatalityRisk: number
-  foreignImportationRisk: number
+  foreignClusterVisit: number
+  foreignImports: number
   gatekeptClusters: number
   gatekeptThreshold: number
+  groupSize: Distribution
   household: Distribution
   illness: Distribution
   immunity: Distribution
@@ -90,21 +92,27 @@ interface Config {
   infectionRisk: number
   install: number
   isolation: number
+  isolationDays: number
+  isolationThreshold: number
+  output: string
   population: number
   preInfectiousDays: number
   preSymptomaticInfectiousDays: number
   publicClusterVisit: number
   publicClusters: number
   sampleVisualisation: boolean
+  selfAttestation: number
+  selfAttestationWeight: number
+  selfIsolation: number
   symptomatic: number
   testDelay: Distribution
-  testThreshold: number
   testing: number
   traceMethod: number
 }
 
 interface Distribution {
   sample(rng: RNG): number
+  max: number
 }
 
 interface Household {
@@ -118,11 +126,100 @@ interface Stats {
   healthy: number
   immune: number
   infected: number
+  isolated: number
+  recovered: number
 }
 
-type CustomConfig = Without<Config, "traceMethod">
+type CustomConfig = Without<Config, "output" | "traceMethod">
 
 type Without<T, K> = Pick<T, Exclude<keyof T, K>>
+
+class ConfigValidator {
+  cfg: Record<string, any>
+  seen: Set<string>
+
+  constructor(cfg: Config) {
+    this.cfg = cfg
+    this.seen = new Set()
+  }
+
+  checkFields() {
+    const fields = Object.keys(this.cfg)
+    const seen = this.seen
+    for (let i = 0; i < fields.length; i++) {
+      const field = fields[i]
+      if (!seen.has(field)) {
+        throw `Config has field "${field}" which hasn't been validated`
+      }
+    }
+  }
+
+  validate(fields: string[], validator: (field: string, val: any) => void) {
+    fields.forEach((field) => {
+      this.seen.add(field)
+      const val = this.cfg[field]
+      if (val === undefined) {
+        throw `The value for "${field}" cannot be undefined`
+      }
+      validator(field, val)
+    })
+  }
+
+  validateBoolean(fields: string[]) {
+    this.validate(fields, (field, val) => {
+      if (typeof val !== "boolean") {
+        throw `The value for "${field}" must be a boolean`
+      }
+    })
+  }
+
+  validateDistribution(fields: string[]) {
+    this.validate(fields, (field, val) => {
+      if (!val.sample) {
+        throw `The value for "${field}" must be a Distribution`
+      }
+    })
+  }
+
+  validateNumber(fields: string[]) {
+    this.validate(fields, (field, val) => {
+      if (typeof val !== "number") {
+        throw `The value for "${field}" must be a number`
+      }
+      if (Math.floor(val) !== val) {
+        throw `The value for "${field}" must be a whole number`
+      }
+      if (val < 1) {
+        throw `The value for "${field}" must be greater than 1`
+      }
+    })
+  }
+
+  validatePercentage(fields: string[]) {
+    this.validate(fields, (field, val) => {
+      if (typeof val !== "number") {
+        throw `The value for "${field}" must be a number`
+      }
+      if (val < 0 || val > 1) {
+        throw `The value for "${field}" must be between 0 and 1`
+      }
+    })
+  }
+
+  validateScore(fields: string[]) {
+    this.validate(fields, (field, val) => {
+      if (typeof val !== "number") {
+        throw `The value for "${field}" must be a number`
+      }
+      if (Math.floor(val) !== val) {
+        throw `The value for "${field}" must be a whole number`
+      }
+      if (val < 0 || val > 100) {
+        throw `The value for "${field}" must be between 0 and 100`
+      }
+    })
+  }
+}
 
 class Graph {
   $: HTMLElement[]
@@ -139,16 +236,15 @@ class Graph {
     ctx.globalCompositeOperation = "destination-over"
     ctx.imageSmoothingEnabled = false
     const elems = [
-      $("infected"),
-      $("healthy"),
-      $("immune"),
-      $("dead"),
       $("day"),
+      $("recovered"),
+      $("healthy"),
+      $("infected"),
+      $("isolated"),
     ]
-    elems[0].style.color = COLOUR_INFECTED
-    elems[1].style.color = COLOUR_HEALTHY
-    elems[2].style.color = COLOUR_IMMUNE
-    elems[3].style.color = COLOUR_DEAD
+    elems[1].style.color = COLOUR_RECOVERED
+    elems[2].style.color = COLOUR_HEALTHY
+    elems[3].style.color = COLOUR_INFECTED
     this.$ = elems
     this.canvas = canvas
     this.cfg = cfg
@@ -163,14 +259,14 @@ class Graph {
     const height = this.height
     const prevDay = day - 1
     const prev = this.values[prevDay]
-    const width = 1
+    const width = Math.max(1, Math.floor(this.width / this.cfg.days))
     const curX = width * day
     const prevX = width * prevDay
     // Draw the dead.
     ctx.fillStyle = COLOUR_DEAD
-    ctx.fillRect(prevX, 0, 1, height)
-    // Draw the immune.
-    ctx.fillStyle = COLOUR_IMMUNE
+    ctx.fillRect(prevX, 0, width, height)
+    // Draw the recovered.
+    ctx.fillStyle = COLOUR_RECOVERED
     ctx.beginPath()
     ctx.moveTo(prevX, prev[2] * height)
     ctx.lineTo(curX, cur[2] * height)
@@ -230,26 +326,26 @@ class Graph {
     values.push(rem)
     rem -= stats.healthy / population
     values.push(rem)
-    rem -= stats.immune / population
+    rem -= stats.recovered / population
     values.push(rem)
     this.values.push(values)
     const day = this.values.length - 1
-    $[0].innerText = stats.infected.toString()
-    $[1].innerText = stats.healthy.toString()
-    $[2].innerText = stats.immune.toString()
-    $[3].innerText = stats.dead.toString()
-    $[4].innerText = day.toString()
+    $[0].innerText = day.toString()
+    $[1].innerText = stats.recovered.toString()
+    $[2].innerText = stats.healthy.toString()
+    $[3].innerText = stats.infected.toString()
+    $[4].innerText = stats.isolated.toString()
     this.draw(day)
   }
 }
 
 class NormalDistribution {
+  max: number
   min: number
-  range: number
 
   constructor(mean: number, min?: number) {
+    this.max = 2 * mean
     this.min = min || 0
-    this.range = 2 * mean
   }
 
   rand(rng: RNG) {
@@ -262,14 +358,14 @@ class NormalDistribution {
       u2 = rng.next()
     }
     let sample = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2)
-    sample = Math.round((sample / 10 + 0.5) * this.range)
+    sample = Math.round((sample / 10 + 0.5) * this.max)
     return sample
   }
 
   sample(rng: RNG) {
     while (true) {
       const val = this.rand(rng)
-      if (val >= this.min && val <= this.range) {
+      if (val >= this.min && val <= this.max) {
         return val
       }
     }
@@ -280,14 +376,19 @@ class Person {
   attrs: number
   clusters: number[]
   contacts: number[][]
+  gen: number
   household: number
   householdContacts: number[]
   id: number
   immunityEndDay: number
   infectedDay: number
   infectionEndDay: number
+  installDate: number
+  isolationEndDay: number
   sim: Simulation
+  spread: number
   status: number
+  testDay: number
   x: number
   y: number
 
@@ -295,20 +396,47 @@ class Person {
     this.attrs = attrs
     this.clusters = []
     this.contacts = []
+    this.gen = -1
     this.id = id
+    this.infectedDay = 0
+    this.infectionEndDay = 0
+    this.immunityEndDay = 0
+    this.installDate = 0
+    this.isolationEndDay = 0
     this.sim = sim
+    this.spread = 0
     this.status = STATUS_HEALTHY
+    this.testDay = 0
   }
 
   appInstalled() {
-    return (this.attrs & ATTR_APP_INSTALLED) !== 0
+    return (this.attrs & PERSON_APP_INSTALLED) !== 0
   }
 
-  infect(today: number) {
+  infect(today: number, gen: number) {
     if ((this.status & STATUS_INFECTED) !== 0) {
-      return
+      return false
     }
+    if ((this.status & STATUS_IMMUNE) !== 0) {
+      return false
+    }
+    if (this.status === STATUS_DEAD) {
+      return false
+    }
+    const sim = this.sim
+    this.gen = gen
+    this.infectedDay = sim.day
+    this.infectionEndDay =
+      sim.day +
+      sim.cfg.preInfectiousDays +
+      sim.cfg.preSymptomaticInfectiousDays +
+      sim.cfg.illness.sample(sim.rng)
+    this.immunityEndDay =
+      this.infectionEndDay + sim.cfg.immunity.sample(sim.rng)
+    this.status &= ~STATUS_HEALTHY
+    this.status &= ~STATUS_RECOVERED
     this.status |= STATUS_INFECTED
+    return true
   }
 
   infected() {
@@ -316,7 +444,15 @@ class Person {
   }
 
   installApp() {
-    this.attrs |= ATTR_APP_INSTALLED
+    this.attrs |= PERSON_APP_INSTALLED
+  }
+
+  isolate(end: number) {
+    if (this.status === STATUS_DEAD) {
+      return
+    }
+    this.isolationEndDay = end
+    this.status |= STATUS_ISOLATED
   }
 
   notInfected() {
@@ -324,7 +460,7 @@ class Person {
   }
 
   symptomatic() {
-    return (this.attrs & ATTR_SYMPTOMATIC) !== 0
+    return (this.attrs & PERSON_SYMPTOMATIC) !== 0
   }
 
   updateStatus() {
@@ -418,19 +554,34 @@ class RNG {
   }
 }
 
+interface Computed {
+  dailyForeign: number
+  dailyTests: number
+  infectionRisk: number[]
+  traceDays: number
+}
+
 class Simulation {
   cfg: Config
   clusters: Cluster[]
+  computed: Computed
   day: number
   graph: Graph
   households: Household[]
   people: Person[]
   period: number
+  presentNow: number[][]
+  presentPrev: number[][]
+  privateClusters: number[]
+  publicClusters: number[]
+  rng: RNG
+  rngApp: RNG
   testQueue: number[]
   viz: Visualisation
 
   constructor(cfg: Config) {
     this.cfg = cfg
+    this.testQueue = []
   }
 
   init() {
@@ -442,10 +593,10 @@ class Simulation {
     for (let i = 0; i < cfg.population; i++) {
       let attrs = 0
       if (rng.next() <= cfg.appInstalled) {
-        attrs |= ATTR_APP_INSTALLED
+        attrs |= PERSON_APP_INSTALLED
       }
       if (rng.next() <= cfg.symptomatic) {
-        attrs |= ATTR_SYMPTOMATIC
+        attrs |= PERSON_SYMPTOMATIC
       }
       const person = new Person(attrs, personID++, this)
       people.push(person)
@@ -479,7 +630,7 @@ class Simulation {
         self.householdContacts = contacts
       }
       const house: Household = {
-        members: members,
+        members,
         x: 0,
         y: 0,
       }
@@ -489,13 +640,17 @@ class Simulation {
     this.households = households
     // Generate clusters and allocate a primary cluster for everyone.
     const clusters: Cluster[] = []
+    const presentNow: number[][] = []
+    const presentPrev: number[][] = []
+    const privateClusters: number[] = []
+    const publicClusters: number[] = []
     let clusterID = 0
     let clusterPeople = people.slice(0)
     shuffle(clusterPeople, rng)
     i = 0
     while (i < cfg.population) {
       const members: number[] = []
-      const size = cfg.cluster.sample(rng)
+      const size = cfg.clusterSize.sample(rng)
       for (let j = 0; j < size; j++) {
         const person = clusterPeople[i++]
         members.push(person.id)
@@ -504,16 +659,32 @@ class Simulation {
           break
         }
       }
+      let attrs = 0
+      if (rng.next() <= cfg.gatekeptClusters) {
+        attrs |= CLUSTER_GATEKEPT
+      }
+      if (rng.next() <= cfg.publicClusters) {
+        attrs |= CLUSTER_PUBLIC
+        publicClusters.push(clusterID)
+      } else {
+        privateClusters.push(clusterID)
+      }
       const cluster: Cluster = {
-        members: members,
-        public: rng.next() <= cfg.publicClusters,
+        attrs,
+        members,
         x: 0,
         y: 0,
       }
-      clusters.push(cluster)
       clusterID++
+      clusters.push(cluster)
+      presentNow.push([])
+      presentPrev.push([])
     }
     this.clusters = clusters
+    this.presentNow = presentNow
+    this.presentPrev = presentPrev
+    this.privateClusters = privateClusters
+    this.publicClusters = publicClusters
     // Assign additional clusters for some people.
     const totalClusters = clusters.length
     for (i = 0; i < cfg.population; i++) {
@@ -529,6 +700,28 @@ class Simulation {
         }
       }
     }
+    // Derive computed values from config parameters.
+    const nonInfection = 1 - cfg.infectionRisk
+    const infectionRisk = []
+    for (let i = 0; i <= cfg.groupSize.max; i++) {
+      infectionRisk[i] = 1 - Math.pow(nonInfection, i)
+    }
+    let traceDays = 0
+    if (cfg.traceMethod === TRACE_APPLE_GOOGLE) {
+      traceDays = 14
+    } else if (cfg.traceMethod === TRACE_SAFETYSCORE) {
+      traceDays =
+        cfg.preInfectiousDays +
+        cfg.preSymptomaticInfectiousDays +
+        cfg.illness.max +
+        1
+    }
+    this.computed = {
+      dailyForeign: cfg.foreignImports / cfg.days,
+      dailyTests: Math.round(cfg.dailyTestCapacity * cfg.population),
+      infectionRisk,
+      traceDays,
+    }
     // Create graph and visualisation.
     if (IN_BROWSER) {
       this.graph = new Graph(cfg)
@@ -536,6 +729,8 @@ class Simulation {
       currentGraph = this.graph
       currentViz = this.viz
     }
+    this.rng = rng
+    this.rngApp = new RNG("app")
   }
 
   next() {
@@ -547,7 +742,8 @@ class Simulation {
     }
     if (this.period === 0) {
       this.nextDay()
-    } else {
+    }
+    for (let i = 0; i < CLUSTER_PERIODS; i++) {
       this.nextPeriod()
     }
     this.queueNext()
@@ -556,30 +752,124 @@ class Simulation {
   nextDay() {
     this.day++
     const cfg = this.cfg
+    const computed = this.computed
     const day = this.day
-    const method = this.cfg.traceMethod
+    const isolationEnd = day + cfg.isolationDays
     const people = this.people
-    const rng = new RNG(`day-${this.day}`)
-    // See if anyone is going to get infected from foreign importation risk.
+    const rng = this.rng
     for (let i = 0; i < cfg.population; i++) {
       const person = people[i]
+      // Update the status of infected people.
       if (person.infected()) {
-        // person.updateStatus(day, method)
-        if (rng.next() <= 0.01) {
-          person.status = STATUS_IMMUNE
+        if (day === person.infectedDay + cfg.preInfectiousDays) {
+          // Handle the day the person might become symptomatic.
+          person.status |= STATUS_CONTAGIOUS
+          if (person.symptomatic()) {
+            person.isolate(isolationEnd)
+            if (person.testDay === 0 && rng.next() <= cfg.testing) {
+              person.testDay = day + cfg.testDelay.sample(rng)
+            }
+          }
+        } else if (day === person.infectionEndDay) {
+          // Handle the end of the infection.
+          if (rng.next() <= cfg.fatalityRisk) {
+            person.status = STATUS_DEAD
+          } else {
+            person.status &= ~STATUS_CONTAGIOUS
+            person.status &= ~STATUS_INFECTED
+            person.status |= STATUS_IMMUNE | STATUS_RECOVERED
+          }
         }
+      } else if (rng.next() <= computed.dailyForeign) {
+        // Infect a person from a foreign imported case.
+        person.infect(day, 0)
       }
       if (person.status === STATUS_DEAD) {
         continue
       }
-      if (person.notInfected()) {
-        if (rng.next() <= cfg.foreignImportationRisk) {
-          person.infect(day)
-          //   console.log(person.status)
-          //   console.log(`Infected ${person.id}`)
-        } else {
-          if (rng.next() <= 0.000001) {
-            person.status = STATUS_DEAD
+      // If the person wants to be tested, then add them to the test queue.
+      if (day === person.testDay) {
+        person.testDay = -1
+        this.testQueue.push(person.id)
+      }
+      // Strip the individual of immunity once it ends.
+      if (
+        (person.status & STATUS_IMMUNE) !== 0 &&
+        day === person.immunityEndDay
+      ) {
+        person.status &= ~STATUS_IMMUNE
+      }
+      // Remove the individual from isolation once it ends.
+      if (
+        (person.status & STATUS_ISOLATED) !== 0 &&
+        day === person.isolationEndDay
+      ) {
+        person.isolationEndDay = 0
+        person.status &= ~STATUS_ISOLATED
+      }
+    }
+    // NOTE(tav): Make sure the number of calls to rng.next() are the same in
+    // each branch.
+    const queue = this.testQueue
+    const rngApp = this.rngApp
+    if (cfg.traceMethod === TRACE_NONE) {
+      const a = 2
+    } else if (cfg.traceMethod === TRACE_APPLE_GOOGLE) {
+      // Follow the Apple/Google Exposure Notification method where contacts of
+      // infected individuals are notified.
+      const seen = new Set()
+      console.log(cfg.dailyTestCapacity)
+      for (let j = 0; j < computed.dailyTests && queue.length > 0; j++) {
+        const id = queue.shift() as number
+        const person = people[id]
+        if (person.infected()) {
+          // Place infected individuals into isolation.
+          person.isolate(isolationEnd)
+          // Notify their contacts.
+          if (person.appInstalled()) {
+            for (const contacts of person.contacts) {
+              // console.log(contacts.length)
+              for (const id of contacts) {
+                if (seen.has(id)) {
+                  continue
+                }
+                const contact = people[id]
+                // Prompt the contact to get tested.
+                if (contact.testDay === 0 && rngApp.next() <= cfg.testing) {
+                  contact.testDay = day + cfg.testDelay.sample(rng)
+                  // console.log()
+                }
+                // Prompt the contact to self-isolate.
+                if (rngApp.next() < cfg.selfIsolation) {
+                  contact.isolate(isolationEnd)
+                } else {
+                  // console.log("not isolated")
+                }
+                seen.add(id)
+              }
+            }
+          }
+        } else if ((person.status & STATUS_ISOLATED) !== 0) {
+          // If an individual had been notified and isolated, remove them from
+          // isolation.
+          person.isolationEndDay = 0
+          person.status &= ~STATUS_ISOLATED
+        }
+        person.testDay = 0
+      }
+    } else if (cfg.traceMethod === TRACE_SAFETYSCORE) {
+    }
+    // Remove old contacts and re-use cleared Array for upcoming contacts.
+    if (cfg.traceMethod !== TRACE_NONE) {
+      for (let i = 0; i < cfg.population; i++) {
+        const person = people[i]
+        if (person.status !== STATUS_DEAD && person.appInstalled()) {
+          if (person.contacts.length === computed.traceDays) {
+            const first = person.contacts.shift() as number[]
+            first.length = 0
+            person.contacts.push(first)
+          } else {
+            person.contacts.push([])
           }
         }
       }
@@ -590,24 +880,39 @@ class Simulation {
       healthy: 0,
       immune: 0,
       infected: 0,
+      isolated: 0,
+      recovered: 0,
     }
+    let infectedBy = 0
     for (let i = 0; i < cfg.population; i++) {
-      const status = people[i].status
-      if (status === STATUS_HEALTHY) {
+      const person = people[i]
+      const status = person.status
+      if ((status & STATUS_HEALTHY) !== 0) {
         stats.healthy++
       } else if ((status & STATUS_INFECTED) !== 0) {
         stats.infected++
-      } else if ((status & STATUS_IMMUNE) !== 0) {
-        stats.immune++
+      } else if ((status & STATUS_RECOVERED) !== 0) {
+        stats.recovered++
       } else if ((status & STATUS_DEAD) !== 0) {
         stats.dead++
       }
+      if ((status & STATUS_IMMUNE) !== 0) {
+        stats.immune++
+      }
+      if ((status & STATUS_ISOLATED) !== 0) {
+        stats.isolated++
+      }
     }
+    // Update output.
     if (IN_BROWSER) {
       this.viz.draw(people)
       this.graph.update(stats)
     } else {
-      console.log(stats)
+      if (cfg.output === "console") {
+        console.log(stats)
+      } else {
+        result.push(stats)
+      }
     }
   }
 
@@ -616,11 +921,102 @@ class Simulation {
     if (this.period === CLUSTER_PERIODS) {
       this.period = 0
     }
+    const cfg = this.cfg
+    const people = this.people
+    const rng = this.rng
+    const present = this.presentNow
+    for (let i = 0; i < cfg.population; i++) {
+      const person = people[i]
+      // Skip dead people.
+      if (person.status === STATUS_DEAD) {
+        continue
+      }
+      // If the person is self-isolating, only consider them if they temporarily
+      // break isolation for some reason.
+      if ((person.status & STATUS_ISOLATED) !== 0) {
+        if (rng.next() <= cfg.isolation) {
+          continue
+        }
+      }
+      // Select a cluster for the person to visit.
+      let cluster
+      if (rng.next() <= cfg.foreignClusterVisit) {
+        if (rng.next() <= cfg.publicClusterVisit) {
+          cluster = Math.floor(rng.next() * this.publicClusters.length)
+        } else {
+          cluster = Math.floor(rng.next() * this.privateClusters.length)
+        }
+      } else {
+        cluster = Math.floor(rng.next() * person.clusters.length)
+      }
+      present[cluster].push(person.id)
+    }
+    const day = this.day
+    const group = []
+    const healthy = []
+    const infected = []
+    const infectionRisk = cfg.infectionRisk
+    const installed = []
+    const trace = cfg.traceMethod !== TRACE_NONE
+    for (let i = 0; i < present.length; i++) {
+      const visitors = present[i]
+      while (visitors.length > 0) {
+        // Segment the visitors into groups.
+        let size = cfg.groupSize.sample(rng)
+        group.length = 0
+        healthy.length = 0
+        infected.length = 0
+        installed.length = 0
+        while (size > 0 && visitors.length > 0) {
+          group.push(visitors.pop())
+          size--
+        }
+        shuffle(group, rng)
+        // Identify the healthy/recovered, the infected, and those with apps.
+        for (let j = 0; j < group.length; j++) {
+          const person = people[group[j]!]
+          if ((person.status & STATUS_INFECTED) !== 0) {
+            infected.push(person)
+          } else if ((person.status & STATUS_IMMUNE) === 0) {
+            healthy.push(person)
+          }
+          if (trace && (person.attrs & PERSON_APP_INSTALLED) !== 0) {
+            installed.push(person)
+          }
+        }
+        // If there are any infected, try and infect the healthy.
+        if (infected.length > 0 && healthy.length > 0) {
+          for (let j = 0; j < healthy.length; j++) {
+            for (let k = 0; k < infected.length; k++) {
+              if (rng.next() <= infectionRisk) {
+                const from = infected[k]
+                healthy[j].infect(day, from.gen + 1)
+                from.spread += 1
+                break
+              }
+            }
+          }
+        }
+        // Establish contacts between those who have app installed.
+        if (trace) {
+          for (let j = 0; j < installed.length; j++) {
+            const contacts = installed[j].contacts
+            const cur = contacts[contacts.length - 1]
+            for (let k = 0; k < installed.length; k++) {
+              if (j === k) {
+                continue
+              }
+              cur.push(installed[k].id)
+            }
+          }
+        }
+      }
+    }
   }
 
   queueNext() {
     if (IN_BROWSER) {
-      if (settingsDisplayed) {
+      if (configDisplayed) {
         return
       }
       handle = requestAnimationFrame(() => this.next())
@@ -685,8 +1081,8 @@ class Visualisation {
         ctx.fillStyle = VIZ_COLOUR_HEALTHY
       } else if ((status & STATUS_INFECTED) !== 0) {
         ctx.fillStyle = VIZ_COLOUR_INFECTED
-      } else if ((status & STATUS_IMMUNE) !== 0) {
-        ctx.fillStyle = VIZ_COLOUR_IMMUNE
+      } else if ((status & STATUS_RECOVERED) !== 0) {
+        ctx.fillStyle = VIZ_COLOUR_RECOVERED
       } else if ((status & STATUS_DEAD) !== 0) {
         ctx.fillStyle = VIZ_COLOUR_DEAD
       }
@@ -813,11 +1209,13 @@ class Visualisation {
 class ZipfDistribution {
   eta: number
   items: number
+  max: number
   min: number
   zetan: number
 
   constructor(min: number, max: number) {
     this.items = max - min + 1
+    this.max = max
     this.min = min
     this.zetan = getZeta(this.items, 0.99)
     this.eta =
@@ -844,61 +1242,69 @@ function $(id: string) {
 function defaultConfig(): CustomConfig {
   return {
     // the portion of people who have the app installed at the start
-    appInstalled: 0.2,
-    // distribution of the number of members in a cluster
-    cluster: new PoissonDistribution(20, 1, 50),
-    // distribution of the contacts a peer has within a cluster for a single period
-    clusterContact: new PoissonDistribution(2.5, 2, 20),
+    appInstalled: 0.4,
     // distribution of the number of clusters for a person
     clusterCount: new ZipfDistribution(1, 20),
-    // likelihood of visiting a "foreign" cluster during a period
-    clusterVisit: 0.4,
+    // distribution of the number of "primary" members in a cluster
+    clusterSize: new PoissonDistribution(20, 1, 50),
     // the portion of the population that can be tested
-    dailyTestCapacity: 0.001,
+    dailyTestCapacity: 0.005,
     // number of days to run the simulation
-    days: 730,
+    days: 150,
     // likelihood of dying once infected
     fatalityRisk: 0.01,
-    // daily likelihood of an individual getting infected from outside the population
-    foreignImportationRisk: 0.003, // 0.00003,
+    // likelihood of visiting a "foreign" cluster during a period
+    foreignClusterVisit: 0.4,
+    // likelihood of infection from outside the population
+    foreignImports: 0.003,
     // the portion of clusters who gate-keep access via SafetyScore
-    gatekeptClusters: 0.2,
+    gatekeptClusters: 0.4,
     // the SafetyScore level needed to access a gate-kept cluster
     gatekeptThreshold: 50,
+    // distribution of the group size within a cluster for a single period
+    groupSize: new PoissonDistribution(2.5, 2, 20),
     // distribution of the number of people in a household
     household: new PoissonDistribution(2.1, 1, 6),
-    // distribution of illness days after being incubation and pre-symptomatic infectiousness
-    illness: new NormalDistribution(21, 14),
+    // distribution of illness days after incubation
+    illness: new NormalDistribution(10.5, 7),
     // distribution of the days of natural immunity
-    immunity: new NormalDistribution(238),
-    // the number of tokens given out to a known infected person
+    immunity: new NormalDistribution(238, 0),
+    // the number of viral tokens given out to a known infected person
     initialTokens: 10000,
     // likelihood of someone getting infected during a single contact
-    infectionRisk: 0.2,
+    infectionRisk: 0.01,
     // likelihood of someone installing SafetyScore for visiting a gate-kept cluster
     install: 0.8,
     // likelihood of a self-isolating person staying at home for any given period during the day
-    isolation: 0.8,
+    isolation: 0.9,
+    // number of days a person should self-isolate
+    isolationDays: 21,
+    // the SafetyScore level below which one is notified to self-isolate
+    isolationThreshold: 50,
     // total number of people
-    population: 10000,
+    population: 100000,
     // number of days before becoming infectious
-    preInfectiousDays: 2,
+    preInfectiousDays: 3,
     // number of days of being infectious before possibly becoming symptomatic
-    preSymptomaticInfectiousDays: 2,
-    // likelihood of visiting a public cluster when visiting a cluster other than your own
-    publicClusterVisit: 0.6,
+    preSymptomaticInfectiousDays: 3,
+    // likelihood of visiting a public cluster when visiting a foreign cluster
+    publicClusterVisit: 0.2,
     // portion of clusters which are public
     publicClusters: 0.15,
     // use sampling to speed up what's shown in the visualisation
     sampleVisualisation: true,
+    // likelihood of a symptomatic person self-attesting
+    selfAttestation: 0.5,
+    // relative weight of viral tokens from a self-attestation
+    selfAttestationWeight: 0.1,
+    // likelihood of a notified person self-isolation
+    selfIsolation: 0.5,
     // the portion of people who become symptomatic
-    symptomatic: 0.1,
+    symptomatic: 0.2,
     // the distribution of the delay days between symptomatic/notified and testing
-    testDelay: new PoissonDistribution(4, 1, 10),
-    // the SafetyScore level below which one is prioritised for testing
-    testThreshold: 50,
+    testDelay: new PoissonDistribution(2, 1, 10),
     // likelihood of a person getting themselves tested if symptomatic/notified
-    testing: 0.9,
+    testing: 0.5,
   }
 }
 
@@ -916,11 +1322,11 @@ function defaultConfigDefinition() {
   return cfg + "\n}"
 }
 
-function displaySettings() {
-  if (settingsDisplayed) {
+function displayConfig() {
+  if (configDisplayed) {
     return
   }
-  settingsDisplayed = true
+  configDisplayed = true
   if (!currentConfigDefinition) {
     currentConfigDefinition = defaultConfigDefinition()
   }
@@ -938,7 +1344,8 @@ function displaySettings() {
 
 function downloadImage() {
   const graph = currentGraph
-  const width = graph.values.length - 1
+  const elemWidth = Math.max(1, Math.floor(graph.width / graph.cfg.days))
+  const width = elemWidth * graph.cfg.days
   const canvas = document.createElement("canvas") as HTMLCanvasElement
   const ctx = canvas.getContext("2d")!
   const src = graph.ctx.getImageData(0, 0, width, graph.height)
@@ -948,13 +1355,13 @@ function downloadImage() {
   const data = canvas.toDataURL("image/png", 1)
   const link = document.createElement("a")
   link.href = data.replace("image/png", "image/octet-stream")
-  let filename = "epimodel"
+  let filename = "simulation"
   switch (graph.cfg.traceMethod) {
     case TRACE_NONE:
       filename += "-zero-interventions"
       break
-    case TRACE_FIRST_DEGREE:
-      filename += "-contact-tracing"
+    case TRACE_APPLE_GOOGLE:
+      filename += "-apple-google-api"
       break
     case TRACE_SAFETYSCORE:
       filename += "-safetyscore"
@@ -965,11 +1372,47 @@ function downloadImage() {
   link.click()
 }
 
+function genSVG(colors: string) {
+  const out = ["<svg>"]
+  out.push("</svg>")
+  console.log(out.join(""))
+}
+
+function getCmdOpt(flag: string, fallback: string) {
+  const idx = process.argv.indexOf(flag)
+  if (idx === -1) {
+    return fallback
+  }
+  return process.argv[idx + 1]
+}
+
 function getConfig(): Config {
   if (!currentConfig) {
-    currentConfig = {...defaultConfig(), traceMethod: TRACE_SAFETYSCORE}
+    currentConfig = {
+      ...defaultConfig(),
+      output: "console",
+      traceMethod: TRACE_NONE,
+    }
   }
   return currentConfig
+}
+
+function getTraceMethod(s: string) {
+  let traceMethod
+  switch (s) {
+    case "apple-google":
+      traceMethod = TRACE_APPLE_GOOGLE
+      break
+    case "none":
+      traceMethod = TRACE_NONE
+      break
+    case "safetyscore":
+      traceMethod = TRACE_SAFETYSCORE
+      break
+    default:
+      throw `Unknown trace method: ${s}`
+  }
+  return traceMethod
 }
 
 function getZeta(n: number, theta: number) {
@@ -985,7 +1428,7 @@ function handleInlayClick(e: Event) {
 }
 
 function handleKeyboard(e: KeyboardEvent) {
-  if (settingsDisplayed) {
+  if (configDisplayed) {
     if (e.code === "Escape") {
       handleOverlayClick()
     }
@@ -995,7 +1438,7 @@ function handleKeyboard(e: KeyboardEvent) {
     return
   }
   if (e.code === "KeyE") {
-    displaySettings()
+    displayConfig()
   }
   if (e.code === "KeyM") {
     const $options = $("options") as HTMLSelectElement
@@ -1010,10 +1453,10 @@ function handleKeyboard(e: KeyboardEvent) {
 }
 
 function handleOverlayClick() {
-  if (!settingsDisplayed) {
+  if (!configDisplayed) {
     return
   }
-  settingsDisplayed = false
+  configDisplayed = false
   $("error").style.display = "none"
   $("overlay").style.display = "none"
   if (currentSim) {
@@ -1082,15 +1525,19 @@ function runSimulation(cfg: Config) {
   }
   if (handle) {
     if (IN_BROWSER) {
-      cancelAnimationFrame(handle)
+      cancelAnimationFrame(handle as number)
     } else {
-      clearTimeout(handle)
+      clearTimeout(handle as ReturnType<typeof setTimeout>)
     }
   }
   const sim = new Simulation(cfg)
   currentSim = sim
   sim.init()
   sim.run()
+}
+
+function scrollEditor() {
+  $mirror.scrollTop = $config.scrollTop
 }
 
 // Adapted from
@@ -1102,20 +1549,18 @@ function shuffle(array: Array<any>, rng: RNG) {
   }
 }
 
+function syncEditor() {
+  if (!configDisplayed) {
+    return
+  }
+  updateMirror($config.value)
+}
+
 function triggerSimulation() {
   const $options = $("options") as HTMLSelectElement
-  let traceMethod = TRACE_NONE
-  switch ($options.options[$options.selectedIndex].value) {
-    case "contacttracing":
-      traceMethod = TRACE_FIRST_DEGREE
-      break
-    case "none":
-      traceMethod = TRACE_NONE
-      break
-    case "safetyscore":
-      traceMethod = TRACE_SAFETYSCORE
-      break
-  }
+  const traceMethod = getTraceMethod(
+    $options.options[$options.selectedIndex].value
+  )
   runSimulation({...getConfig(), traceMethod})
 }
 
@@ -1130,7 +1575,7 @@ function updateConfig(e?: Event) {
   if (e) {
     e.stopPropagation()
   }
-  if (!settingsDisplayed) {
+  if (!configDisplayed) {
     return
   }
   const $config = $("config") as HTMLTextAreaElement
@@ -1146,111 +1591,9 @@ function updateConfig(e?: Event) {
   }
   currentConfig = cfg
   currentConfigDefinition = definition
-  settingsDisplayed = false
+  configDisplayed = false
   $("overlay").style.display = "none"
   triggerSimulation()
-}
-
-function validateConfig(cfg: Config) {
-  validateDistribution(cfg, [
-    "cluster",
-    "clusterContact",
-    "clusterCount",
-    "household",
-    "illness",
-    "immunity",
-    "testDelay",
-  ])
-  validateNumber(cfg, [
-    "days",
-    "initialTokens",
-    "population",
-    "preInfectiousDays",
-    "preSymptomaticInfectiousDays",
-  ])
-  validatePercentage(cfg, [
-    "appInstalled",
-    "dailyTestCapacity",
-    "clusterVisit",
-    "fatalityRisk",
-    "foreignImportationRisk",
-    "gatekeptClusters",
-    "infectionRisk",
-    "install",
-    "isolation",
-    "publicClusterVisit",
-    "publicClusters",
-    "symptomatic",
-    "testing",
-  ])
-  validateScore(cfg, ["gatekeptThreshold", "testThreshold"])
-  return cfg
-}
-
-function validateDistribution(cfg: Record<string, any>, fields: string[]) {
-  fields.forEach((field) => {
-    const val = cfg[field]
-    if (val === undefined) {
-      throw `The value for "${field}" cannot be undefined`
-    }
-    if (!val.sample) {
-      throw `The value for "${field}" must be a Distribution`
-    }
-  })
-}
-
-function validateNumber(cfg: Record<string, any>, fields: string[]) {
-  fields.forEach((field) => {
-    const val = cfg[field]
-    if (typeof val !== "number") {
-      throw `The value for "${field}" must be a number`
-    }
-    if (Math.floor(val) !== val) {
-      throw `The value for "${field}" must be a whole number`
-    }
-    if (val < 1) {
-      throw `The value for "${field}" must be greater than 1`
-    }
-  })
-}
-
-function validatePercentage(cfg: Record<string, any>, fields: string[]) {
-  fields.forEach((field) => {
-    const val = cfg[field]
-    if (typeof val !== "number") {
-      throw `The value for "${field}" must be a number`
-    }
-    if (val < 0 || val > 1) {
-      throw `The value for "${field}" must be between 0 and 1`
-    }
-  })
-}
-
-function validateScore(cfg: Record<string, any>, fields: string[]) {
-  fields.forEach((field) => {
-    const val = cfg[field]
-    if (typeof val !== "number") {
-      throw `The value for "${field}" must be a number`
-    }
-    if (Math.floor(val) !== val) {
-      throw `The value for "${field}" must be a whole number`
-    }
-    if (val < 0 || val > 100) {
-      throw `The value for "${field}" must be between 0 and 100`
-    }
-  })
-}
-
-declare namespace Prism {
-  function highlight(code: string, lang: string): string
-  let languages: Record<string, string>
-}
-
-function syncEditor() {
-  if (!settingsDisplayed) {
-    return
-  }
-  updateMirror($config.value)
 }
 
 function updateMirror(src: string) {
@@ -1258,8 +1601,46 @@ function updateMirror(src: string) {
   $mirror.innerHTML = code
 }
 
-function scrollEditor() {
-  $mirror.scrollTop = $config.scrollTop
+function validateConfig(cfg: Config) {
+  const v = new ConfigValidator(cfg)
+  v.validateBoolean(["sampleVisualisation"])
+  v.validateDistribution([
+    "clusterCount",
+    "clusterSize",
+    "groupSize",
+    "household",
+    "illness",
+    "immunity",
+    "testDelay",
+  ])
+  v.validateNumber([
+    "days",
+    "initialTokens",
+    "isolationDays",
+    "population",
+    "preInfectiousDays",
+    "preSymptomaticInfectiousDays",
+  ])
+  v.validatePercentage([
+    "appInstalled",
+    "dailyTestCapacity",
+    "fatalityRisk",
+    "foreignClusterVisit",
+    "foreignImports",
+    "gatekeptClusters",
+    "infectionRisk",
+    "install",
+    "isolation",
+    "publicClusterVisit",
+    "publicClusters",
+    "selfAttestation",
+    "selfAttestationWeight",
+    "symptomatic",
+    "testing",
+  ])
+  v.validateScore(["gatekeptThreshold", "isolationThreshold"])
+  v.checkFields()
+  return cfg
 }
 
 function main() {
@@ -1268,14 +1649,20 @@ function main() {
     $("config").addEventListener("keyup", syncEditor)
     $("config").addEventListener("scroll", scrollEditor)
     $("download").addEventListener("click", downloadImage)
+    $("edit-config").addEventListener("click", displayConfig)
     $("inlay").addEventListener("click", handleInlayClick)
     $("options").addEventListener("change", triggerSimulation)
     $("overlay").addEventListener("click", handleOverlayClick)
-    $("settings").addEventListener("click", displaySettings)
     $("update-config").addEventListener("click", updateConfig)
     triggerSimulation()
   } else {
-    runSimulation(getConfig())
+    const colors = getCmdOpt("--colors", "default")
+    const output = getCmdOpt("--output", "console")
+    const traceMethod = getTraceMethod(getCmdOpt("--method", "none"))
+    runSimulation({...getConfig(), output, traceMethod})
+    if (output === "svg") {
+      genSVG(colors)
+    }
   }
 }
 

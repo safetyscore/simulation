@@ -146,6 +146,14 @@ textarea::-webkit-scrollbar {
   top: 40px;
 }
 
+#edit-config {
+  top: 0;
+}
+
+#edit-config img {
+  width: 24px;
+}
+
 #error {
   background: #ffa2a4;
   display: none;
@@ -176,6 +184,11 @@ textarea::-webkit-scrollbar {
   width: 80%;
 }
 
+#isolated,
+#r {
+  font-weight: normal;
+}
+
 #overlay {
   background: rgba(0, 0, 0, 0.5);
   display: none;
@@ -185,14 +198,6 @@ textarea::-webkit-scrollbar {
   top: 0;
   width: 100%;
   z-index: 10;
-}
-
-#settings {
-  top: 0;
-}
-
-#settings img {
-  width: 24px;
 }
 
 #top {
