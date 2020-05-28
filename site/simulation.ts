@@ -58,6 +58,7 @@ let currentGraph: Graph
 let currentSim: Simulation
 let currentViz: Visualisation
 let handle: ReturnType<typeof setTimeout> | number
+let randSuffix = 1590673685829
 let result: Stats[] = []
 
 let $config: HTMLTextAreaElement
@@ -81,6 +82,7 @@ interface Config {
   clusterSize: Distribution
   dailyTestCapacity: number
   days: number
+  exposedVisit: number
   fatalityRisk: number
   foreignClusterVisit: number
   foreignImports: number
@@ -90,7 +92,6 @@ interface Config {
   household: Distribution
   illness: Distribution
   immunity: Distribution
-  initialTokens: number
   infectionRisk: number
   installForeign: number
   installOwn: number
@@ -425,43 +426,24 @@ class Person {
 
   // NOTE(tav): We simplify the calculations and deposit the tokens in just the
   // current daily account.
-  deposit(
-    tokens: number,
-    from: number,
-    depth: number,
-    counts: Map<number, number>[],
-    people: Person[],
-    unitToken: number
-  ) {
+  deposit(from: number, depth: number, people: Person[]) {
     if (this.status === STATUS_DEAD) {
       return
     }
-    this.tokens[this.tokens.length - 1][0] += tokens
+    this.tokens[this.tokens.length - 1][depth] += 1
     if (depth === 2) {
       return
     }
-    const count = counts[depth]
-    count.clear()
-    let total = 0
-    for (const contacts of this.contacts) {
-      for (const id of contacts) {
-        if (count.has(id)) {
-          count.set(id, count.get(id)! + 1)
-        } else {
-          count.set(id, 1)
+    depth++
+    for (let i = 0; i < this.contacts.length; i++) {
+      const contacts = this.contacts[i]
+      for (let j = 0; j < contacts.length; j++) {
+        const id = contacts[j]
+        if (id === from) {
+          continue
         }
-        total++
+        people[id].deposit(this.id, depth, people)
       }
-    }
-    const cdepth = depth + 1
-    const units = tokens / total
-    for (const [id, tally] of count) {
-      const amount = tally * units
-      if (amount < unitToken) {
-        continue
-      }
-      const person = people[id]
-      person.deposit(amount, this.id, cdepth, counts, people, unitToken)
     }
   }
 
@@ -498,7 +480,7 @@ class Person {
   installSafetyScore(day: number) {
     this.attrs |= PERSON_APP_INSTALLED
     this.installDate = day
-    this.tokens.push([0, 0])
+    this.tokens.push([0, 0, 0])
   }
 
   isolate(end: number) {
@@ -604,22 +586,20 @@ interface Computed {
   dailyForeign: number
   dailyTests: number
   inactivityPenalty: number
-  infectionRisk: number[]
   installForeign: number
   installOwn: number
-  riskFactor: number
+  meanContacts: number
   traceDays: number
-  unitToken: number
 }
 
 class Simulation {
   cfg: Config
   clusters: Cluster[]
   computed: Computed
-  counts: Map<number, number>[]
   day: number
   graph: Graph
   households: Household[]
+  installBase: number
   people: Person[]
   period: number
   presentNow: number[][]
@@ -629,12 +609,12 @@ class Simulation {
   recentInfections: number[]
   rng: RNG
   rngApp: RNG
+  rngForeign: RNG
   testQueue: number[]
   viz: Visualisation
 
   constructor(cfg: Config) {
     this.cfg = cfg
-    this.counts = [new Map(), new Map(), new Map()]
     this.recentInfections = []
     this.testQueue = []
   }
@@ -644,11 +624,13 @@ class Simulation {
     const rng = new RNG(`init`)
     // Generate people with custom attributes.
     const people: Person[] = []
+    let installBase = 0
     let personID = 0
     for (let i = 0; i < cfg.population; i++) {
       let attrs = 0
       if (rng.next() <= cfg.appInstalled) {
         attrs |= PERSON_APP_INSTALLED
+        installBase++
       }
       if (rng.next() <= cfg.symptomatic) {
         attrs |= PERSON_SYMPTOMATIC
@@ -656,6 +638,7 @@ class Simulation {
       const person = new Person(attrs, personID++, this)
       people.push(person)
     }
+    this.installBase = installBase / cfg.population
     this.people = people
     // Generate households and allocate people to households.
     const households: Household[] = []
@@ -756,11 +739,6 @@ class Simulation {
       }
     }
     // Derive computed values from config parameters.
-    const nonInfection = 1 - cfg.infectionRisk
-    const infectionRisk = []
-    for (let i = 0; i <= cfg.groupSize.max; i++) {
-      infectionRisk[i] = 1 - Math.pow(nonInfection, i)
-    }
     let traceDays = 0
     if (cfg.traceMethod === TRACE_APPLE_GOOGLE) {
       traceDays = 14
@@ -768,7 +746,7 @@ class Simulation {
       traceDays =
         cfg.preInfectiousDays +
         cfg.preSymptomaticInfectiousDays +
-        cfg.illness.max +
+        Math.round(getMean(cfg.illness)) +
         1
     }
     const meanContacts =
@@ -781,14 +759,10 @@ class Simulation {
       dailyForeign: cfg.foreignImports / cfg.days,
       dailyTests: Math.round(cfg.dailyTestCapacity * cfg.population),
       inactivityPenalty: 100 / traceDays,
-      infectionRisk,
       installForeign: cfg.installForeign / cfg.days,
       installOwn: cfg.installOwn / cfg.days,
-      riskFactor: 1 / cfg.infectionRisk,
+      meanContacts,
       traceDays,
-      unitToken:
-        (cfg.initialTokens / (meanContacts * meanContacts)) *
-        (1 / cfg.infectionRisk),
     }
     // Create graph and visualisation.
     if (IN_BROWSER) {
@@ -797,8 +771,9 @@ class Simulation {
       currentGraph = this.graph
       currentViz = this.viz
     }
-    this.rng = rng
-    this.rngApp = new RNG(`app`)
+    this.rng = new RNG(`base-${randSuffix}`)
+    this.rngApp = new RNG(`app-${randSuffix}`)
+    this.rngForeign = new RNG(`foreign-${randSuffix}`)
   }
 
   next() {
@@ -826,6 +801,7 @@ class Simulation {
     const people = this.people
     const rng = this.rng
     const rngApp = this.rngApp
+    const rngForeign = this.rngForeign
     for (let i = 0; i < cfg.population; i++) {
       const person = people[i]
       // Update the status of infected people.
@@ -849,7 +825,7 @@ class Simulation {
             person.status |= STATUS_IMMUNE | STATUS_RECOVERED
           }
         }
-      } else if (rng.next() <= computed.dailyForeign) {
+      } else if (rngForeign.next() <= computed.dailyForeign) {
         // Infect a person from a foreign imported case.
         person.infect(day, 0)
       }
@@ -898,13 +874,18 @@ class Simulation {
       for (let i = 0; i < computed.dailyTests && queue.length > 0; i++) {
         const id = queue.shift() as number
         const person = people[id]
+        if (person.status === STATUS_DEAD) {
+          continue
+        }
         if (person.infected()) {
           // Place infected individuals into isolation.
           person.isolate(isolationEnd)
           // Notify their contacts.
           if (person.appInstalled()) {
-            for (const contacts of person.contacts) {
-              for (const id of contacts) {
+            for (let j = 0; j < person.contacts.length; j++) {
+              const contacts = person.contacts[j]
+              for (let k = 0; k < contacts.length; k++) {
+                const id = contacts[k]
                 if (seen.has(id)) {
                   continue
                 }
@@ -914,7 +895,7 @@ class Simulation {
                   contact.testDay = day + cfg.testDelay.sample(rng)
                 }
                 // Prompt the contact to self-isolate.
-                if (rngApp.next() < cfg.selfIsolation) {
+                if (rngApp.next() <= cfg.selfIsolation) {
                   contact.isolate(isolationEnd)
                 }
                 seen.add(id)
@@ -943,76 +924,65 @@ class Simulation {
         }
       }
     } else if (cfg.traceMethod === TRACE_SAFETYSCORE) {
-      const counts = this.counts
-      const inactivityPenalty = computed.inactivityPenalty
-      const traceDays = computed.traceDays
-      const unitToken = computed.unitToken
-      // Work out the recent average infections.
-      let total = 0
-      for (const infections of this.recentInfections) {
-        total += infections
-      }
-      let avg
-      if (this.recentInfections.length === 0) {
-        avg = 1
-      } else {
-        avg = total / this.recentInfections.length
-        if (avg < 1) {
-          avg = 1
-        }
-      }
-      // let adjust = Math.max(0.9, Math.log(avg))
-      let adjust = 0.9
-      let riskFactor = computed.riskFactor / (avg * adjust)
+      const {inactivityPenalty, meanContacts, traceDays} = computed
       // Handle test results.
-      let infections = 0
       for (let i = 0; i < computed.dailyTests && queue.length > 0; i++) {
         const id = queue.shift() as number
         const person = people[id]
-        infections++
+        if (person.status === STATUS_DEAD) {
+          continue
+        }
         if (person.infected()) {
           person.isolate(isolationEnd)
           if (person.appInstalled()) {
-            person.deposit(cfg.initialTokens, -1, 0, counts, people, unitToken)
-          } else {
-            // TODO(tav): negative tests
+            person.deposit(-1, 0, people)
           }
+        } else if ((person.status & STATUS_ISOLATED) !== 0) {
+          person.isolationEndDay = 0
+          person.status &= ~STATUS_ISOLATED
         }
         person.testDay = 0
       }
-      const window =
-        2 * (cfg.preInfectiousDays + cfg.preSymptomaticInfectiousDays)
-      if (this.recentInfections.length >= window) {
-        this.recentInfections.shift()
-      }
-      this.recentInfections.push(infections)
+      // Amplify second-degree weighting based on app penetration and test
+      // capacity.
+      const contactLikelihood = this.installBase * this.installBase
+      const secondDegree = Math.min(
+        10 / (contactLikelihood * contactLikelihood * cfg.dailyTestCapacity),
+        50
+      )
+      console.log(secondDegree)
+      // const secondDegree = cfg.infectionRisk * (1.1 - this.installBase) * 10
       for (let i = 0; i < cfg.population; i++) {
         const person = people[i]
         if (person.status === STATUS_DEAD || !person.appInstalled()) {
           continue
         }
         // Update the SafetyScore of everyone who has the app installed.
-        let tokens = 0
-        for (const account of person.tokens) {
-          tokens += account[0]
+        let score = 100
+        for (let j = 0; j < person.tokens.length; j++) {
+          const account = person.tokens[j]
+          score -= account[0] * 100
+          score -= account[1] * 50
+          score -= account[2] * secondDegree
         }
-        let score =
-          100 - Math.min((tokens * 100) / (unitToken * riskFactor), 100)
-        const active = Math.min(day - person.installDate)
+        const active = Math.max(0, day - person.installDate)
         if (active < traceDays) {
           score -= (traceDays - active) * inactivityPenalty
         }
         person.score = score
-        // Self-isolate if score is too low.
-        if (score <= cfg.isolationThreshold) {
-          person.isolationEndDay = -1
-          person.status |= STATUS_ISOLATED
-        } else if (
-          (person.status & STATUS_ISOLATED) !== 0 &&
-          person.isolationEndDay === -1
-        ) {
-          person.isolationEndDay = 0
-          person.status &= ~STATUS_ISOLATED
+        let recentFirst = false
+        if (person.tokens.length > 0) {
+          recentFirst = person.tokens[person.tokens.length - 1][1] > 0
+        }
+        // Prompt the individual to isolate and get tested if they received a
+        // recent first-degree deposit
+        if (recentFirst && score <= cfg.isolationThreshold) {
+          if (rngApp.next() <= cfg.selfIsolation) {
+            person.isolate(isolationEnd)
+          }
+          if (person.testDay === 0 && rngApp.next() <= cfg.testing) {
+            person.testDay = day + cfg.testDelay.sample(rng)
+          }
         }
         // Remove old contacts.
         if (person.contacts.length === computed.traceDays) {
@@ -1027,9 +997,10 @@ class Simulation {
           const first = person.tokens.shift() as number[]
           first[0] = 0
           first[1] = 0
+          first[2] = 0
           person.tokens.push(first)
         } else {
-          person.tokens.push([0, 0])
+          person.tokens.push([0, 0, 0])
         }
       }
     }
@@ -1065,7 +1036,7 @@ class Simulation {
         stats.installed++
       }
     }
-    console.log(stats.installed)
+    this.installBase = stats.installed / cfg.population
     // Update output.
     if (IN_BROWSER) {
       this.viz.draw(people)
@@ -1119,10 +1090,17 @@ class Simulation {
       }
       if (traceMethod === TRACE_SAFETYSCORE) {
         const cluster = clusters[clusterID]
-        // Handle a gate-kept cluster.
-        if ((cluster.attrs & CLUSTER_GATEKEPT) !== 0) {
-          // If the user doesn't have the app installed, see if they will
-          // consider it.
+        if ((cluster.attrs & CLUSTER_GATEKEPT) === 0) {
+          // If the user has the app and the cluster isn't gate-kept, see if
+          // they'll consider visiting it.
+          if ((person.attrs & PERSON_APP_INSTALLED) !== 0) {
+            if (!(rngApp.next() <= cfg.exposedVisit)) {
+              continue
+            }
+          }
+        } else {
+          // For a gate-kept cluster, if the user doesn't have the app
+          // installed, see if they will consider installing it.
           if ((person.attrs & PERSON_APP_INSTALLED) === 0) {
             if (foreign) {
               person.attrs |= PERSON_APP_FOREIGN_CLUSTER
@@ -1439,7 +1417,9 @@ function defaultConfig(): CustomConfig {
     // the portion of the population that can be tested
     dailyTestCapacity: 0.005,
     // number of days to run the simulation
-    days: 365,
+    days: 300,
+    // the likelihood of a SafetyScore user being okay with visiting a non-gate-kept cluster
+    exposedVisit: 0.5,
     // likelihood of dying once infected
     fatalityRisk: 0.01,
     // likelihood of visiting a "foreign" cluster during a period
@@ -1452,14 +1432,12 @@ function defaultConfig(): CustomConfig {
     gatekeptThreshold: 50,
     // distribution of the group size within a cluster for a single period
     groupSize: new PoissonDistribution(2.5, 2, 20),
-    // distribution of the number of people in a household
+    // distribution of the number of people in a household [not used yet]
     household: new PoissonDistribution(2.1, 1, 6),
     // distribution of illness days after incubation
     illness: new NormalDistribution(10.5, 7),
     // distribution of the days of natural immunity
     immunity: new NormalDistribution(238, 0),
-    // the number of viral tokens given out to a known infected person
-    initialTokens: 10000,
     // likelihood of someone getting infected during a single contact
     infectionRisk: 0.01,
     // likelihood of someone installing SafetyScore for visiting a foreign gate-kept cluster
@@ -1484,18 +1462,18 @@ function defaultConfig(): CustomConfig {
     publicClusters: 0.15,
     // use sampling to speed up what's shown in the visualisation
     sampleVisualisation: true,
-    // likelihood of a symptomatic person self-attesting
+    // likelihood of a symptomatic person self-attesting [not used yet]
     selfAttestation: 0.5,
-    // relative weight of viral tokens from a self-attestation
+    // relative weight of viral tokens from a self-attestation [not used yet]
     selfAttestationWeight: 0.1,
     // likelihood of a notified person self-isolating
     selfIsolation: 0.9,
     // the portion of people who become symptomatic
-    symptomatic: 0.3,
+    symptomatic: 0.2,
     // the distribution of the delay days between symptomatic/notified and testing
     testDelay: new PoissonDistribution(2, 1, 10),
     // likelihood of a person getting themselves tested if symptomatic/notified
-    testing: 0.7,
+    testing: 0.6,
   }
 }
 
@@ -1631,14 +1609,14 @@ function handleKeyboard(e: KeyboardEvent) {
   if (configDisplayed) {
     if (e.code === "Escape") {
       handleOverlayClick()
-    }
-    if (e.ctrlKey && e.code === "Enter") {
+    } else if (e.ctrlKey && e.code === "Enter") {
       updateConfig()
     }
     return
   }
   if (e.code === "KeyE") {
     displayConfig()
+    return
   }
   if (e.code === "KeyM") {
     const $options = $("options") as HTMLSelectElement
@@ -1649,6 +1627,12 @@ function handleKeyboard(e: KeyboardEvent) {
       $options.selectedIndex = val + 1
     }
     triggerSimulation()
+    return
+  }
+  if (e.code === "KeyR") {
+    randSuffix = Date.now()
+    triggerSimulation()
+    return
   }
 }
 
@@ -1815,7 +1799,6 @@ function validateConfig(cfg: Config) {
   ])
   v.validateNumber([
     "days",
-    "initialTokens",
     "isolationDays",
     "population",
     "preInfectiousDays",
@@ -1824,12 +1807,14 @@ function validateConfig(cfg: Config) {
   v.validatePercentage([
     "appInstalled",
     "dailyTestCapacity",
+    "exposedVisit",
     "fatalityRisk",
     "foreignClusterVisit",
     "foreignImports",
     "gatekeptClusters",
     "infectionRisk",
-    "install",
+    "installForeign",
+    "installOwn",
     "isolation",
     "publicClusterVisit",
     "publicClusters",
