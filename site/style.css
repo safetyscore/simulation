@@ -1,5 +1,6 @@
 body,
 html {
+  background-color: #41646c;
   font-family: "HelveticaNeue-Light", "Helvetica Neue Light", "Helvetica Neue",
     Helvetica, Arial, "Lucida Grande", sans-serif;
   font-size: 15px;
@@ -7,7 +8,6 @@ html {
   line-height: 1.6em;
   height: 100%;
   margin: 0;
-  overflow: hidden;
   padding: 0;
   width: 100%;
 }
@@ -26,18 +26,6 @@ button {
 
 canvas {
   display: block;
-}
-
-select {
-  margin-top: 10px;
-  width: 100%;
-}
-
-#editor {
-  flex: 1;
-  overflow: hidden;
-  position: relative;
-  width: 100%;
 }
 
 pre,
@@ -88,7 +76,6 @@ pre .operator {
 }
 
 textarea {
-  /* display: none; */
   -webkit-text-fill-color: transparent;
   background: transparent;
   border: 0;
@@ -104,9 +91,9 @@ textarea::-webkit-scrollbar {
 }
 
 .action {
-  padding: 12px;
-  position: absolute;
-  right: 0;
+  float: right;
+  padding: 12px 12px 4px 0px;
+  position: relative;
 }
 
 .action:hover {
@@ -117,16 +104,20 @@ textarea::-webkit-scrollbar {
   visibility: visible;
 }
 
+.action img {
+  width: 24px;
+}
+
 .action span {
   background: #fbf6b3;
   color: #000;
-  margin-top: -5px;
-  min-width: 120px;
   padding: 8px 10px;
   position: absolute;
-  right: 100%;
+  right: 5px;
   text-align: center;
   visibility: hidden;
+  white-space: nowrap;
+  bottom: -36px;
   z-index: 5;
 }
 
@@ -136,22 +127,66 @@ textarea::-webkit-scrollbar {
   width: 0;
 }
 
+.graph {
+  float: left;
+}
+
+.heading {
+  float: left;
+  padding: 14px 10px 3px 230px;
+}
+
+.refresh {
+  padding-top: 1px;
+  width: 21px !important;
+}
+
 .right {
   float: right;
   font-weight: bold;
 }
 
-#download {
-  display: none;
-  top: 40px;
+.simulation {
+  background: #fff;
+  margin-bottom: 20px;
+  user-select: none;
 }
 
-#edit-config {
-  top: 0;
+.summary {
+  float: left;
+  padding: 0 20px 0 12px;
+  width: 200px;
 }
 
-#edit-config img {
-  width: 24px;
+.value {
+  font-weight: normal;
+}
+
+.value-dead {
+  color: #444444;
+}
+
+.value-healthy {
+  color: #8bb4b8;
+}
+
+.value-immune {
+  color: #009d51;
+}
+
+.value-infected {
+  color: #ff3945;
+}
+
+.value-recovered {
+  color: #009d51;
+}
+
+#editor {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
 }
 
 #error {
@@ -159,18 +194,6 @@ textarea::-webkit-scrollbar {
   display: none;
   margin-bottom: 20px;
   padding: 20px;
-}
-
-#graph {
-  float: left;
-}
-
-#info {
-  background: #fff;
-  float: left;
-  overflow: hidden;
-  padding: 18px 15px;
-  width: 200px;
 }
 
 #inlay {
@@ -184,9 +207,8 @@ textarea::-webkit-scrollbar {
   width: 80%;
 }
 
-#isolated,
-#r {
-  font-weight: normal;
+#main {
+  padding: 20px;
 }
 
 #overlay {
@@ -198,16 +220,4 @@ textarea::-webkit-scrollbar {
   top: 0;
   width: 100%;
   z-index: 10;
-}
-
-#top {
-  background: #eeeeee;
-  user-select: none;
-}
-
-#viz {
-  background: #41646c;
-  /* background: #eeeeee; */
-  clear: both;
-  width: 100%;
 }
