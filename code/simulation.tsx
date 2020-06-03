@@ -344,6 +344,7 @@ class ConfigValidator {
 class Controller {
   cfg: Config
   definition: string
+  handle: number
   id: number
   paused: boolean
   rand: number
@@ -361,21 +362,12 @@ class Controller {
     this.sims = {}
   }
 
-  drawLoop() {
-    if (!this.paused) {
-      for (let i = 0; i < this.simList.length; i++) {
-        this.simList[i].render()
-      }
-    }
-    requestAnimationFrame(() => this.drawLoop())
-  }
-
   initBrowser() {
     this.$main = $("main")
     this.initSims(METHODS, true)
     this.setDimensions()
     this.run()
-    requestAnimationFrame(() => this.drawLoop())
+    this.redraw()
   }
 
   initNodeJS(method: number) {
@@ -407,8 +399,25 @@ class Controller {
     this.run()
   }
 
+  redraw() {
+    if (!this.paused) {
+      for (let i = 0; i < this.simList.length; i++) {
+        this.simList[i].render()
+      }
+    }
+    this.handle = 0
+  }
+
+  requestRedraw() {
+    if (this.handle) {
+      return
+    }
+    this.handle = requestAnimationFrame(() => this.redraw())
+  }
+
   resume() {
     this.paused = false
+    this.requestRedraw()
   }
 
   run() {
@@ -1568,7 +1577,7 @@ class Simulation {
       return
     }
     this.results.push(resp.stats)
-    this.dirty = true
+    this.markDirty()
     if (this.results.length === this.days) {
       if (this.worker) {
         this.worker.terminate()
@@ -1605,6 +1614,11 @@ class Simulation {
     hide(this.$info)
   }
 
+  markDirty() {
+    this.dirty = true
+    this.ctrl.requestRedraw()
+  }
+
   render() {
     if (!IN_BROWSER) {
       return
@@ -1612,6 +1626,7 @@ class Simulation {
     if (this.hidden || configDisplayed || !this.dirty) {
       return
     }
+    this.dirty = false
     this.renderSummary()
     this.renderGraph()
   }
@@ -1791,7 +1806,7 @@ class Simulation {
       show(this.$root)
     }
     this.days = days
-    this.dirty = true
+    this.markDirty()
     this.results = []
     hide(this.$download)
     this.id = id
@@ -1817,9 +1832,8 @@ class Simulation {
     this.$canvas.width = width
     this.$canvas.style.height = `${this.height}px`
     this.$canvas.style.width = `${width}px`
-    this.dirty = true
     this.width = width
-    this.render()
+    this.markDirty()
   }
 
   setupUI() {
