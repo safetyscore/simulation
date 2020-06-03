@@ -1303,6 +1303,31 @@ var Simulation = /** @class */ (function () {
         this.results = [];
         this.width = 0;
     }
+    Simulation.prototype.download = function () {
+        var cfg = eval("(" + this.definition + ")");
+        var data = "";
+        if (cfg.outputFormat === "json") {
+            data = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.results));
+        }
+        else if (cfg.outputFormat === "png") {
+            var canvas = document.createElement("canvas");
+            var widthElem = Math.max(1, Math.floor(this.width / (cfg.days - 1)));
+            var width = widthElem * (cfg.days - 1);
+            var ctx = canvas.getContext("2d");
+            var src = this.ctx.getImageData(0, 0, width, this.height);
+            canvas.height = this.height;
+            canvas.width = width;
+            ctx.imageSmoothingEnabled = false;
+            ctx.putImageData(src, 0, 0);
+            data = canvas
+                .toDataURL("image/png", 1)
+                .replace("image/png", "image/octet-stream");
+        }
+        var link = document.createElement("a");
+        link.download = "simulation-" + getMethodID(this.method) + "-" + Date.now() + "." + cfg.outputFormat;
+        link.href = data;
+        link.click();
+    };
     Simulation.prototype.handleMessage = function (resp) {
         if (this.id !== resp.id) {
             return;
@@ -1314,7 +1339,7 @@ var Simulation = /** @class */ (function () {
                 this.worker.terminate();
                 this.worker = undefined;
             }
-            // show(this.$download)
+            show(this.$download);
         }
     };
     Simulation.prototype.hide = function () {
@@ -1521,13 +1546,14 @@ var Simulation = /** @class */ (function () {
             show(this.$root);
         }
         this.days = days;
-        this.markDirty();
-        this.results = [];
-        hide(this.$download);
+        this.definition = cfg;
         this.id = id;
+        this.results = [];
         this.worker = new AbstractedWorker("./simulation.js");
         this.worker.onMessage(function (msg) { return _this.handleMessage(msg); });
         this.worker.postMessage({ cfg: cfg, id: id, method: this.method, rand: rand });
+        this.markDirty();
+        hide(this.$download);
     };
     Simulation.prototype.setDimensions = function () {
         if (!IN_BROWSER) {
@@ -1557,6 +1583,7 @@ var Simulation = /** @class */ (function () {
         var $download = (h("div", { class: "action" },
             h("img", { src: "download.svg", alt: "Download" }),
             h("span", null, "Download File")));
+        $download.addEventListener("click", function () { return _this.download(); });
         hide($download);
         var $heading = h("div", { class: "heading" }, this.heading);
         var $info = h("div", { class: "info" });
@@ -1641,7 +1668,7 @@ function getMethodID(method) {
         return "free-movement";
     }
     if (method === METHOD_LOCKDOWN) {
-        return "lockdowns";
+        return "lockdown";
     }
     if (method === METHOD_SAFETYSCORE) {
         return "safetyscore";
@@ -1746,7 +1773,7 @@ function defaultConfig() {
         lockdownEndWindow: 14,
         // the number of infected people which will trigger a lockdown
         lockdownStart: 15,
-        // format of the generated output file, can be "csv", "png", or "svg"
+        // format of the generated output file, can be "json" or "png"
         outputFormat: "png",
         // total number of people
         population: 10000,
@@ -1812,23 +1839,6 @@ function displayConfig() {
     $config.scrollTop = 0;
     $config.setSelectionRange(0, 0);
 }
-// function downloadImage() {
-//   const elemWidth = Math.max(1, Math.floor(graph.width / graph.cfg.days))
-//   const width = elemWidth * graph.cfg.days
-//   const canvas = document.createElement("canvas") as HTMLCanvasElement
-//   const ctx = canvas.getContext("2d")!
-//   const src = graph.ctx.getImageData(0, 0, width, graph.height)
-//   canvas.height = graph.height
-//   canvas.width = width
-//   ctx.putImageData(src, 0, 0)
-//   const data = canvas.toDataURL("image/png", 1)
-//   const link = document.createElement("a")
-//   link.href = data.replace("image/png", "image/octet-stream")
-//   let filename = `simulation-${getMethodID(method)}`
-//   filename += `-${Date.now()}.png`
-//   link.download = filename
-//   link.click()
-// }
 function genSVG(colors) {
     var out = ["<svg>"];
     out.push("</svg>");
@@ -2120,7 +2130,7 @@ function validateConfig(cfg) {
         "visitPublicCluster",
     ]);
     v.validateScore(["gatekeptThreshold", "isolationThreshold"]);
-    v.validateStringValue("outputFormat", ["csv", "png", "svg"]);
+    v.validateStringValue("outputFormat", ["json", "png", "svg"]);
     v.checkFields();
     return cfg;
 }
