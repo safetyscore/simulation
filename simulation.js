@@ -198,22 +198,12 @@ var Controller = /** @class */ (function () {
         this.simList = [];
         this.sims = {};
     }
-    Controller.prototype.drawLoop = function () {
-        var _this = this;
-        if (!this.paused) {
-            for (var i = 0; i < this.simList.length; i++) {
-                this.simList[i].render();
-            }
-        }
-        requestAnimationFrame(function () { return _this.drawLoop(); });
-    };
     Controller.prototype.initBrowser = function () {
-        var _this = this;
         this.$main = $("main");
         this.initSims(METHODS, true);
         this.setDimensions();
         this.run();
-        requestAnimationFrame(function () { return _this.drawLoop(); });
+        this.redraw();
     };
     Controller.prototype.initNodeJS = function (method) {
         var cfg = this.cfg;
@@ -240,8 +230,24 @@ var Controller = /** @class */ (function () {
         console.log("Using random seed: " + this.rand);
         this.run();
     };
+    Controller.prototype.redraw = function () {
+        if (!this.paused) {
+            for (var i = 0; i < this.simList.length; i++) {
+                this.simList[i].render();
+            }
+        }
+        this.handle = 0;
+    };
+    Controller.prototype.requestRedraw = function () {
+        var _this = this;
+        if (this.handle) {
+            return;
+        }
+        this.handle = requestAnimationFrame(function () { return _this.redraw(); });
+    };
     Controller.prototype.resume = function () {
         this.paused = false;
+        this.requestRedraw();
     };
     Controller.prototype.run = function () {
         var cfg = this.cfg;
@@ -1298,7 +1304,7 @@ var Simulation = /** @class */ (function () {
             return;
         }
         this.results.push(resp.stats);
-        this.dirty = true;
+        this.markDirty();
         if (this.results.length === this.days) {
             if (this.worker) {
                 this.worker.terminate();
@@ -1332,6 +1338,10 @@ var Simulation = /** @class */ (function () {
     Simulation.prototype.hideInfo = function () {
         hide(this.$info);
     };
+    Simulation.prototype.markDirty = function () {
+        this.dirty = true;
+        this.ctrl.requestRedraw();
+    };
     Simulation.prototype.render = function () {
         if (!IN_BROWSER) {
             return;
@@ -1339,6 +1349,7 @@ var Simulation = /** @class */ (function () {
         if (this.hidden || configDisplayed || !this.dirty) {
             return;
         }
+        this.dirty = false;
         this.renderSummary();
         this.renderGraph();
     };
@@ -1506,7 +1517,7 @@ var Simulation = /** @class */ (function () {
             show(this.$root);
         }
         this.days = days;
-        this.dirty = true;
+        this.markDirty();
         this.results = [];
         hide(this.$download);
         this.id = id;
@@ -1531,9 +1542,8 @@ var Simulation = /** @class */ (function () {
         this.$canvas.width = width;
         this.$canvas.style.height = this.height + "px";
         this.$canvas.style.width = width + "px";
-        this.dirty = true;
         this.width = width;
-        this.render();
+        this.markDirty();
     };
     Simulation.prototype.setupUI = function () {
         var _this = this;
