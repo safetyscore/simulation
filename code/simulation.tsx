@@ -673,6 +673,9 @@ class Model {
       if (cfg.installHousehold) {
         for (i = 0; i < cfg.population; i++) {
           const person = people[i]
+          if (!person.appInstalled()) {
+            continue
+          }
           for (let j = 0; j < person.householdContacts.length; j++) {
             const id = person.householdContacts[j]
             if (id > i) {
@@ -686,6 +689,9 @@ class Model {
     } else if (this.method === METHOD_APPLE_GOOGLE && cfg.installHousehold) {
       for (i = 0; i < cfg.population; i++) {
         const person = people[i]
+        if (!person.appInstalled()) {
+          continue
+        }
         for (let j = 0; j < person.householdContacts.length; j++) {
           const id = person.householdContacts[j]
           if (id > i) {
