@@ -127,6 +127,10 @@ textarea::-webkit-scrollbar {
   width: 0;
 }
 
+.content {
+  position: relative;
+}
+
 .graph {
   float: left;
 }
@@ -134,6 +138,15 @@ textarea::-webkit-scrollbar {
 .heading {
   float: left;
   padding: 14px 10px 3px 230px;
+}
+
+.info {
+  background: #fafafa;
+  display: none;
+  padding: 12px 20px 16px 12px;
+  position: absolute;
+  top: 0;
+  width: 200px;
 }
 
 .refresh {
@@ -208,7 +221,7 @@ textarea::-webkit-scrollbar {
 }
 
 #main {
-  padding: 20px;
+  padding: 20px 20px 0px 20px;
 }
 
 #overlay {
