@@ -2048,6 +2048,7 @@ function updateConfig(e) {
     }
     configDisplayed = false;
     $("overlay").style.display = "none";
+    ctrl.resume();
     ctrl.runNew(cfg, definition);
 }
 function updateMirror(src) {
