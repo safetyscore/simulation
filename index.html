@@ -1,47 +1,39 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>SafetyScore Simulation</title>
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+<link rel="manifest" href="site.webmanifest">
+<link rel="mask-icon" href="safari-pinned-tab.svg" color="#5bbad5">
+<link rel="stylesheet" href="style.css">
+<meta name="apple-mobile-web-app-title" content="SafetyScore">
+<meta name="application-name" content="SafetyScore">
 <meta name="description" content="Try out different parameters and see the effectiveness of SafetyScore!">
+<meta name="msapplication-TileColor" content="#2d89ef">
+<meta name="theme-color" content="#ffffff">
 <script src="https://cdn.jsdelivr.net/npm/prismjs@1.20.0/prism.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/prismjs@1.20.0/components/prism-javascript.js"></script>
 <script src="simulation.js"></script>
-<link rel="stylesheet" href="style.css">
 <body>
-<div id="top">
-    <div class="action" id="edit-config"><img src="settings.svg" alt="Settings"><span>Edit Config</span></div>
-    <div class="action" id="download"><img src="download.svg" alt="Download"><span>Download PNG</span></div>
-    <div id="info">
-        <div>Day<div class="right" id="day">0</div></div>
-        <div>Dead<div class="right" id="dead">0</div></div>
-        <div>Recovered<div class="right" id="recovered">0</div></div>
-        <div>Healthy<div class="right" id="healthy">0</div></div>
-        <div>Sick<div class="right" id="infected">0</div></div>
-        <div>Isolated<div class="right" id="isolated">0</div></div>
-        <div class="clear"></div>
-        <div><select id="options">
-            <option value="none">Use Zero Interventions</option>
-            <option value="apple-google">Use Apple/Google API</option>
-            <option value="safetyscore">Use SafetyScore</option>
-        </select></div>
+    <div id="main"></div>
+    <div id="overlay">
+        <div id="inlay">
+            <div id="error"></div>
+            <div id="editor">
+                <textarea id="config" spellcheck="false"></textarea>
+                <pre id="mirror">s</pre>
+            </div>
+            <button id="update-config">Update Config</button>
+        </div>
     </div>
-    <canvas id="graph"></canvas>
-</div>
-<canvas id="viz"></canvas>
-<div id="overlay"><div id="inlay">
-    <div id="error"></div>
-    <div id="editor">
-        <textarea id="config" spellcheck="false"></textarea>
-        <pre id="mirror">s</pre>
-    </div>
-    <button id="update-config">Update Config</button>
-</div></div>
+</body>
 <!--
 You can use certain keyboard shortcuts:
 
     Press e to bring up the config editor
     Press escape to exit the config editor without saving changes
     Press ctrl-enter to save changes to the config and run new simulation
-    Press m to change the trace methodology
     Press r to re-run the simulation with a different random factor
 
 You can find the full source at https://github.com/safetyscore/simulation
