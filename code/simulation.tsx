@@ -114,7 +114,7 @@ interface Config {
   lockdownEnd: number
   lockdownEndWindow: number
   lockdownStart: number
-  outputFormat: "csv" | "png" | "svg"
+  outputFormat: "json" | "png" | "svg"
   population: number
   preInfectiousDays: number
   preSymptomaticInfectiousDays: number
@@ -1541,6 +1541,7 @@ class Simulation {
   ctrl: Controller
   ctx: CanvasRenderingContext2D
   days: number
+  definition: string
   dirty: boolean
   handle?: ReturnType<typeof setTimeout>
   heading: string
@@ -1576,6 +1577,35 @@ class Simulation {
     this.width = 0
   }
 
+  download() {
+    const cfg = eval(`(${this.definition})`) as Config
+    let data = ""
+    if (cfg.outputFormat === "json") {
+      data = `data:text/json;charset=utf-8,${encodeURIComponent(
+        JSON.stringify(this.results)
+      )}`
+    } else if (cfg.outputFormat === "png") {
+      const canvas = document.createElement("canvas") as HTMLCanvasElement
+      const widthElem = Math.max(1, Math.floor(this.width / (cfg.days - 1)))
+      const width = widthElem * (cfg.days - 1)
+      const ctx = canvas.getContext("2d")!
+      const src = this.ctx.getImageData(0, 0, width, this.height)
+      canvas.height = this.height
+      canvas.width = width
+      ctx.imageSmoothingEnabled = false
+      ctx.putImageData(src, 0, 0)
+      data = canvas
+        .toDataURL("image/png", 1)
+        .replace("image/png", "image/octet-stream")
+    }
+    const link = document.createElement("a")
+    link.download = `simulation-${getMethodID(this.method)}-${Date.now()}.${
+      cfg.outputFormat
+    }`
+    link.href = data
+    link.click()
+  }
+
   handleMessage(resp: WorkerResponse) {
     if (this.id !== resp.id) {
       return
@@ -1587,7 +1617,7 @@ class Simulation {
         this.worker.terminate()
         this.worker = undefined
       }
-      // show(this.$download)
+      show(this.$download)
     }
   }
 
@@ -1810,13 +1840,14 @@ class Simulation {
       show(this.$root)
     }
     this.days = days
-    this.markDirty()
-    this.results = []
-    hide(this.$download)
+    this.definition = cfg
     this.id = id
+    this.results = []
     this.worker = new AbstractedWorker("./simulation.js")
     this.worker.onMessage((msg: WorkerResponse) => this.handleMessage(msg))
     this.worker.postMessage({cfg, id, method: this.method, rand})
+    this.markDirty()
+    hide(this.$download)
   }
 
   setDimensions() {
@@ -1850,6 +1881,7 @@ class Simulation {
         <span>Download File</span>
       </div>
     )
+    $download.addEventListener("click", () => this.download())
     hide($download)
     const $heading = <div class="heading">{this.heading}</div>
     const $info = <div class="info"></div>
@@ -1950,7 +1982,7 @@ function getMethodID(method: number) {
     return "free-movement"
   }
   if (method === METHOD_LOCKDOWN) {
-    return "lockdowns"
+    return "lockdown"
   }
   if (method === METHOD_SAFETYSCORE) {
     return "safetyscore"
@@ -2066,7 +2098,7 @@ function defaultConfig(): Config {
     lockdownEndWindow: 14,
     // the number of infected people which will trigger a lockdown
     lockdownStart: 15,
-    // format of the generated output file, can be "csv", "png", or "svg"
+    // format of the generated output file, can be "json" or "png"
     outputFormat: "png",
     // total number of people
     population: 10000,
@@ -2134,24 +2166,6 @@ function displayConfig() {
   $config.scrollTop = 0
   $config.setSelectionRange(0, 0)
 }
-
-// function downloadImage() {
-//   const elemWidth = Math.max(1, Math.floor(graph.width / graph.cfg.days))
-//   const width = elemWidth * graph.cfg.days
-//   const canvas = document.createElement("canvas") as HTMLCanvasElement
-//   const ctx = canvas.getContext("2d")!
-//   const src = graph.ctx.getImageData(0, 0, width, graph.height)
-//   canvas.height = graph.height
-//   canvas.width = width
-//   ctx.putImageData(src, 0, 0)
-//   const data = canvas.toDataURL("image/png", 1)
-//   const link = document.createElement("a")
-//   link.href = data.replace("image/png", "image/octet-stream")
-//   let filename = `simulation-${getMethodID(method)}`
-//   filename += `-${Date.now()}.png`
-//   link.download = filename
-//   link.click()
-// }
 
 function genSVG(colors: string) {
   const out = ["<svg>"]
@@ -2449,7 +2463,7 @@ function validateConfig(cfg: Config) {
     "visitPublicCluster",
   ])
   v.validateScore(["gatekeptThreshold", "isolationThreshold"])
-  v.validateStringValue("outputFormat", ["csv", "png", "svg"])
+  v.validateStringValue("outputFormat", ["json", "png", "svg"])
   v.checkFields()
   return cfg
 }
