@@ -109,6 +109,7 @@ interface Config {
   isolationLikelihood: number
   isolationLockdown: number
   isolationThreshold: number
+  isolationSymptomatic: number
   keyWorkers: number
   lockdownEnd: number
   lockdownEndWindow: number
@@ -168,6 +169,7 @@ interface RNGGroup {
   isolationEffectiveness: RNG
   isolationLikelihood: RNG
   isolationLockdown: RNG
+  isolationSymptomatic: RNG
   keyWorker: RNG
   publicClusters: RNG
   selectOwnCluster: RNG
@@ -489,6 +491,7 @@ class Model {
       isolationEffectiveness: new RNG(`isolationEffectiveness-${rand}`),
       isolationLikelihood: new RNG(`isolationLikelihood-${rand}`),
       isolationLockdown: new RNG(`isolationLockdown-${rand}`),
+      isolationSymptomatic: new RNG(`isolationSymptomatic-${rand}`),
       keyWorker: new RNG(`keyWorker-${rand}`),
       publicClusters: new RNG(`publicClusters-${rand}`),
       selectOwnCluster: new RNG(`selectOwnCluster-${rand}`),
@@ -754,7 +757,9 @@ class Model {
           // Handle the day the person might become symptomatic.
           person.status |= STATUS_CONTAGIOUS
           if (person.symptomatic()) {
-            person.isolate(isolationEnd)
+            if (rng.isolationSymptomatic.next() <= cfg.isolationSymptomatic) {
+              person.isolate(isolationEnd)
+            }
             if (
               person.testDay === 0 &&
               rng.testSymptomatic.next() <= cfg.testSymptomatic
@@ -2052,6 +2057,8 @@ function defaultConfig(): Config {
     isolationLockdown: 0.9,
     // the SafetyScore level below which one is notified to self-isolate and test
     isolationThreshold: 50,
+    // likelihood of a symptomatic individual self-isolating
+    isolationSymptomatic: 1,
     // portion of the population who will not be isolated during lockdown
     keyWorkers: 0.16,
     // the number of infected people, below which a lockdown could end
@@ -2428,6 +2435,7 @@ function validateConfig(cfg: Config) {
     "isolationEffectiveness",
     "isolationLikelihood",
     "isolationLockdown",
+    "isolationSymptomatic",
     "keyWorkers",
     "publicClusters",
     "safetyScoreInstalled",
