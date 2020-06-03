@@ -2371,6 +2371,7 @@ function updateConfig(e?: Event) {
   }
   configDisplayed = false
   $("overlay").style.display = "none"
+  ctrl.resume()
   ctrl.runNew(cfg, definition)
 }
 
