@@ -209,6 +209,24 @@ textarea::-webkit-scrollbar {
   padding: 20px;
 }
 
+#header {
+  padding: 0 0 20px 8px;
+}
+
+#header a {
+  color: #fff;
+  font-size: 30px;
+  line-height: 30px;
+  text-decoration: none;
+}
+
+#header img {
+  display: inline-block;
+  float: right;
+  padding: 0 14px 0 0;
+  width: 30px;
+}
+
 #inlay {
   align-items: stretch;
   background: #fff;
