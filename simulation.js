@@ -1666,36 +1666,6 @@ var Simulation = /** @class */ (function () {
     };
     return Simulation;
 }());
-function getMethodID(method) {
-    if (method === METHOD_APPLE_GOOGLE) {
-        return "apple-google";
-    }
-    if (method === METHOD_FREE_MOVEMENT) {
-        return "free-movement";
-    }
-    if (method === METHOD_LOCKDOWN) {
-        return "lockdown";
-    }
-    if (method === METHOD_SAFETYSCORE) {
-        return "safetyscore";
-    }
-    throw "Unknown method: " + method;
-}
-function getMethodLabel(method) {
-    if (method === METHOD_APPLE_GOOGLE) {
-        return "Apple/Google-Style Contact Tracing";
-    }
-    if (method === METHOD_FREE_MOVEMENT) {
-        return "Free Movement";
-    }
-    if (method === METHOD_LOCKDOWN) {
-        return "Lockdowns";
-    }
-    if (method === METHOD_SAFETYSCORE) {
-        return "SafetyScore";
-    }
-    throw "Unknown method: " + method;
-}
 // Derived from https://github.com/willscott/zipfian
 var ZipfDistribution = /** @class */ (function () {
     function ZipfDistribution(_a) {
@@ -1887,6 +1857,36 @@ function getMethod(s) {
             throw "Unknown method: " + s;
     }
     return method;
+}
+function getMethodID(method) {
+    if (method === METHOD_APPLE_GOOGLE) {
+        return "apple-google";
+    }
+    if (method === METHOD_FREE_MOVEMENT) {
+        return "free-movement";
+    }
+    if (method === METHOD_LOCKDOWN) {
+        return "lockdown";
+    }
+    if (method === METHOD_SAFETYSCORE) {
+        return "safetyscore";
+    }
+    throw "Unknown method: " + method;
+}
+function getMethodLabel(method) {
+    if (method === METHOD_APPLE_GOOGLE) {
+        return "Apple/Google-Style Contact Tracing";
+    }
+    if (method === METHOD_FREE_MOVEMENT) {
+        return "Free Movement";
+    }
+    if (method === METHOD_LOCKDOWN) {
+        return "Lockdowns";
+    }
+    if (method === METHOD_SAFETYSCORE) {
+        return "SafetyScore";
+    }
+    throw "Unknown method: " + method;
 }
 function getZeta(n, theta) {
     var sum = 0;
