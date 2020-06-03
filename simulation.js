@@ -476,6 +476,9 @@ var Model = /** @class */ (function () {
             if (cfg.installHousehold) {
                 for (i = 0; i < cfg.population; i++) {
                     var person = people[i];
+                    if (!person.appInstalled()) {
+                        continue;
+                    }
                     for (var j = 0; j < person.householdContacts.length; j++) {
                         var id = person.householdContacts[j];
                         if (id > i) {
@@ -490,6 +493,9 @@ var Model = /** @class */ (function () {
         else if (this.method === METHOD_APPLE_GOOGLE && cfg.installHousehold) {
             for (i = 0; i < cfg.population; i++) {
                 var person = people[i];
+                if (!person.appInstalled()) {
+                    continue;
+                }
                 for (var j = 0; j < person.householdContacts.length; j++) {
                     var id = person.householdContacts[j];
                     if (id > i) {
