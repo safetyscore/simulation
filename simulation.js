@@ -1186,6 +1186,7 @@ var Person = /** @class */ (function () {
                 model.cfg.illness.sample(model.rng.illness);
         this.immunityEndDay =
             this.infectionEndDay + model.cfg.immunity.sample(model.rng.immunity);
+        this.spread = 0;
         this.status &= ~STATUS_HEALTHY;
         this.status &= ~STATUS_RECOVERED;
         this.status |= STATUS_INFECTED;
