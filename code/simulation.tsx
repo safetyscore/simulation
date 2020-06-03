@@ -1980,38 +1980,6 @@ class Simulation {
   }
 }
 
-function getMethodID(method: number) {
-  if (method === METHOD_APPLE_GOOGLE) {
-    return "apple-google"
-  }
-  if (method === METHOD_FREE_MOVEMENT) {
-    return "free-movement"
-  }
-  if (method === METHOD_LOCKDOWN) {
-    return "lockdown"
-  }
-  if (method === METHOD_SAFETYSCORE) {
-    return "safetyscore"
-  }
-  throw `Unknown method: ${method}`
-}
-
-function getMethodLabel(method: number) {
-  if (method === METHOD_APPLE_GOOGLE) {
-    return "Apple/Google-Style Contact Tracing"
-  }
-  if (method === METHOD_FREE_MOVEMENT) {
-    return "Free Movement"
-  }
-  if (method === METHOD_LOCKDOWN) {
-    return "Lockdowns"
-  }
-  if (method === METHOD_SAFETYSCORE) {
-    return "SafetyScore"
-  }
-  throw `Unknown method: ${method}`
-}
-
 // Derived from https://github.com/willscott/zipfian
 class ZipfDistribution {
   eta: number
@@ -2219,6 +2187,38 @@ function getMethod(s: string) {
       throw `Unknown method: ${s}`
   }
   return method
+}
+
+function getMethodID(method: number) {
+  if (method === METHOD_APPLE_GOOGLE) {
+    return "apple-google"
+  }
+  if (method === METHOD_FREE_MOVEMENT) {
+    return "free-movement"
+  }
+  if (method === METHOD_LOCKDOWN) {
+    return "lockdown"
+  }
+  if (method === METHOD_SAFETYSCORE) {
+    return "safetyscore"
+  }
+  throw `Unknown method: ${method}`
+}
+
+function getMethodLabel(method: number) {
+  if (method === METHOD_APPLE_GOOGLE) {
+    return "Apple/Google-Style Contact Tracing"
+  }
+  if (method === METHOD_FREE_MOVEMENT) {
+    return "Free Movement"
+  }
+  if (method === METHOD_LOCKDOWN) {
+    return "Lockdowns"
+  }
+  if (method === METHOD_SAFETYSCORE) {
+    return "SafetyScore"
+  }
+  throw `Unknown method: ${method}`
 }
 
 function getZeta(n: number, theta: number) {
