@@ -1350,8 +1350,6 @@ class Person {
   status: number
   testDay: number
   tokens: number[][]
-  x: number
-  y: number
 
   constructor(attrs: number, id: number, model: Model) {
     this.attrs = attrs
@@ -1419,6 +1417,7 @@ class Person {
       model.cfg.illness.sample(model.rng.illness)
     this.immunityEndDay =
       this.infectionEndDay + model.cfg.immunity.sample(model.rng.immunity)
+    this.spread = 0
     this.status &= ~STATUS_HEALTHY
     this.status &= ~STATUS_RECOVERED
     this.status |= STATUS_INFECTED
