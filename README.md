@@ -230,19 +230,31 @@ The system currently supports four distinct modes:
 
 ### Future Considerations
 
-This work is just the start. We will be evolving this to support:
-
-* Environmental factors and the related effects on transmission.
+This work is just the start. We will be evolving this to support various
+improvements like:
 
 * Locale-specific demographics and their relationship to risk and productivity.
 
 * Distinct cluster types such as schools, hospitals, offices, etc.
 
+* The sensitivity/specificity of testing relative to the progression of the
+  illness.
+
+* Environmental factors and the related effects on transmission.
+
 * Better representations of each of the methods.
 
 * Varying temporal contact structures based on social behaviour.
 
-* Macroscopic mobility structures such as airports.
+* Dynamically evolving parameters based on social behaviour.
+
+* Attempts to cheat SafetyScore by specific demographics.
+
+* Factoring in events which may affect contact detection, e.g. due to mobile
+  phone losing charge, being purposefully turned off, etc.
+
+* Macroscopic mobility structures such as airports, and local commute
+  topologies.
 
 * Varying risk based on healthcare capacity.
 
