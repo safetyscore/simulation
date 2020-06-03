@@ -294,6 +294,7 @@ var Model = /** @class */ (function () {
             isolationEffectiveness: new RNG("isolationEffectiveness-" + rand),
             isolationLikelihood: new RNG("isolationLikelihood-" + rand),
             isolationLockdown: new RNG("isolationLockdown-" + rand),
+            isolationSymptomatic: new RNG("isolationSymptomatic-" + rand),
             keyWorker: new RNG("keyWorker-" + rand),
             publicClusters: new RNG("publicClusters-" + rand),
             selectOwnCluster: new RNG("selectOwnCluster-" + rand),
@@ -558,7 +559,9 @@ var Model = /** @class */ (function () {
                     // Handle the day the person might become symptomatic.
                     person.status |= STATUS_CONTAGIOUS;
                     if (person.symptomatic()) {
-                        person.isolate(isolationEnd);
+                        if (rng.isolationSymptomatic.next() <= cfg.isolationSymptomatic) {
+                            person.isolate(isolationEnd);
+                        }
                         if (person.testDay === 0 &&
                             rng.testSymptomatic.next() <= cfg.testSymptomatic) {
                             person.testDay = day + cfg.testDelay.sample(rng.testDelay);
@@ -1732,6 +1735,8 @@ function defaultConfig() {
         isolationLockdown: 0.9,
         // the SafetyScore level below which one is notified to self-isolate and test
         isolationThreshold: 50,
+        // likelihood of a symptomatic individual self-isolating
+        isolationSymptomatic: 1,
         // portion of the population who will not be isolated during lockdown
         keyWorkers: 0.16,
         // the number of infected people, below which a lockdown could end
@@ -2099,6 +2104,7 @@ function validateConfig(cfg) {
         "isolationEffectiveness",
         "isolationLikelihood",
         "isolationLockdown",
+        "isolationSymptomatic",
         "keyWorkers",
         "publicClusters",
         "safetyScoreInstalled",
