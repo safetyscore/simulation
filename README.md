@@ -6,6 +6,12 @@ affect infectious disease spread.
 
 ![](site/screen.png)
 
+If you're interested in collaborating, please join us on Slack:
+
+* https://safetyscore.app/join
+
+### Model Parameters
+
 The model supports a broad range of parameters that can be changed from within
 the web interface:
 
