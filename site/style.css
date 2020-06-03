@@ -141,9 +141,9 @@ textarea::-webkit-scrollbar {
 }
 
 .info {
-  background: #fafafa;
+  background: #f0f0f0;
   display: none;
-  padding: 12px 20px 16px 12px;
+  padding: 14px 20px 18px 12px;
   position: absolute;
   top: 0;
   width: 200px;
