@@ -12,7 +12,7 @@ const CLUSTER_PUBLIC = 2
 const CLUSTER_PERIODS = 8
 
 // User interface colours.
-const COLOUR_DEAD = "#444444"
+const COLOUR_DEAD = "#000000"
 const COLOUR_HEALTHY = "#8bb4b8"
 const COLOUR_INFECTED = "#ff3945"
 const COLOUR_RECOVERED = "#009d51"
@@ -40,6 +40,9 @@ const STATUS_DEAD = 32
 const STATUS_ISOLATED = 64
 const STATUS_QUARANTINED = 128
 
+// SVG namespace.
+const SVG = "http://www.w3.org/2000/svg"
+
 // Visual ordering of methods.
 const METHODS = [
   METHOD_FREE_MOVEMENT,
@@ -48,8 +51,8 @@ const METHODS = [
   METHOD_LOCKDOWN,
 ]
 
-let configDisplayed = false
 let ctrl: Controller
+let overlayShown = false
 let parentPort: MessagePort & NodeEventEmitter
 
 let $config: HTMLTextAreaElement
@@ -57,7 +60,6 @@ let $mirror: HTMLPreElement
 
 declare namespace JSX {
   interface IntrinsicElements {
-    canvas: ElemProps
     div: ElemProps
     img: ElemProps
     span: ElemProps
@@ -102,6 +104,7 @@ interface Config {
   immunity: Distribution
   infectionRisk: number
   installForeign: number
+  installOwn: number
   installHousehold: boolean
   isolateHousehold: boolean
   isolationDays: number
@@ -114,11 +117,12 @@ interface Config {
   lockdownEnd: number
   lockdownEndWindow: number
   lockdownStart: number
-  outputFormat: "json" | "png" | "svg"
+  imageFormat: "png" | "svg"
   population: number
   preInfectiousDays: number
   preSymptomaticInfectiousDays: number
   publicClusters: number
+  runs: number
   safetyScoreInstalled: number
   secondDegreeWeight: number
   selfAttestation: number
@@ -166,6 +170,7 @@ interface RNGGroup {
   infect: RNG
   init: RNG
   installForeign: RNG
+  installOwn: RNG
   isolationEffectiveness: RNG
   isolationLikelihood: RNG
   isolationLockdown: RNG
@@ -203,7 +208,7 @@ interface Stats {
 }
 
 interface WorkerRequest {
-  cfg: string
+  definition: string
   id: number
   method: number
   rand: number
@@ -292,7 +297,7 @@ class ConfigValidator {
     })
   }
 
-  validateNumber(fields: string[]) {
+  validateNumber(min: number, fields: string[]) {
     this.validate(fields, (field, val) => {
       if (typeof val !== "number") {
         throw `The value for "${field}" must be a number`
@@ -300,8 +305,8 @@ class ConfigValidator {
       if (Math.floor(val) !== val) {
         throw `The value for "${field}" must be a whole number`
       }
-      if (val < 1) {
-        throw `The value for "${field}" must be greater than 1`
+      if (val < min) {
+        throw `The value for "${field}" must be greater than ${min}`
       }
     })
   }
@@ -349,6 +354,7 @@ class Controller {
   handle: number
   id: number
   paused: boolean
+  multi: boolean
   rand: number
   sims: Record<number, Simulation>
   simList: Simulation[]
@@ -358,6 +364,7 @@ class Controller {
     this.cfg = defaultConfig()
     this.definition = defaultConfigDefinition()
     this.id = 1
+    this.multi = false
     this.rand = 1591164094719
     this.paused = false
     this.simList = []
@@ -411,6 +418,9 @@ class Controller {
   }
 
   requestRedraw() {
+    if (!IN_BROWSER) {
+      return
+    }
     if (this.handle) {
       return
     }
@@ -423,11 +433,10 @@ class Controller {
   }
 
   run() {
-    const cfg = this.cfg
     for (let i = 0; i < this.simList.length; i++) {
       const sim = this.simList[i]
       if (!sim.hidden) {
-        sim.run(this.definition, cfg.days, this.id, this.rand)
+        sim.run(this.cfg, this.definition, this.id, this.rand)
       }
     }
   }
@@ -440,6 +449,9 @@ class Controller {
   }
 
   setDimensions() {
+    if (!IN_BROWSER) {
+      return
+    }
     for (let i = 0; i < this.simList.length; i++) {
       this.simList[i].setDimensions()
     }
@@ -488,6 +500,7 @@ class Model {
       infect: new RNG(`infect-${rand}`),
       init: new RNG(`init-${rand}`),
       installForeign: new RNG(`installForeign-${rand}`),
+      installOwn: new RNG(`installOwn-${rand}`),
       isolationEffectiveness: new RNG(`isolationEffectiveness-${rand}`),
       isolationLikelihood: new RNG(`isolationLikelihood-${rand}`),
       isolationLockdown: new RNG(`isolationLockdown-${rand}`),
@@ -512,7 +525,7 @@ class Model {
   }
 
   handleMessage(req: WorkerRequest) {
-    this.cfg = eval(`(${req.cfg})`)
+    this.cfg = eval(`(${req.definition})`)
     this.id = req.id
     this.method = req.method
     this.rand = req.rand
@@ -647,13 +660,13 @@ class Model {
     }
     // Make certain clusters gatekept and install SafetyScore to all members.
     if (this.method === METHOD_SAFETYSCORE) {
-      let installed = 0
+      let converted = 0
       const convert = new Set()
       const limit = Math.round(cfg.gatekeptClusters * cfg.population)
       const gatekept = clusters.slice(0)
       shuffle(gatekept, rng.shuffle)
       for (i = 0; i < gatekept.length; i++) {
-        if (installed >= limit) {
+        if (converted >= limit) {
           break
         }
         const cluster = gatekept[i]
@@ -662,9 +675,12 @@ class Model {
           const id = cluster.members[j]
           const member = people[id]
           if (!convert.has(id)) {
-            installed++
+            converted++
             convert.add(id)
-            if (member.installSafetyScore(0)) {
+            if (
+              rng.installOwn.next() <= cfg.installOwn &&
+              member.installSafetyScore(0)
+            ) {
               installBase++
             }
           }
@@ -715,6 +731,7 @@ class Model {
         cfg.preSymptomaticInfectiousDays +
         Math.round(getMean(cfg.illness)) +
         1
+      traceDays = 14
     }
     const meanContacts =
       getMean(cfg.clusterCount) * getMean(cfg.clusterSize) +
@@ -1544,12 +1561,12 @@ class RNG {
 }
 
 class Simulation {
+  cfg: Config
   ctrl: Controller
-  ctx: CanvasRenderingContext2D
-  days: number
   definition: string
   dirty: boolean
   handle?: ReturnType<typeof setTimeout>
+  handleToggle: (e: Event) => void
   heading: string
   height: number
   hidden: boolean
@@ -1559,10 +1576,11 @@ class Simulation {
   results: Stats[]
   width: number
   worker?: AbstractedWorker
-  $canvas: HTMLCanvasElement
+  $boxplot: SVGElement
   $content: HTMLElement
   $download: HTMLElement
   $info: HTMLElement
+  $graph: SVGElement
   $heading: HTMLElement
   $root: HTMLElement
   $run: HTMLElement
@@ -1573,7 +1591,6 @@ class Simulation {
 
   constructor(ctrl: Controller, method: number) {
     this.ctrl = ctrl
-    this.days = 0
     this.dirty = true
     this.heading = getMethodLabel(method)
     this.height = 300
@@ -1584,32 +1601,41 @@ class Simulation {
   }
 
   download() {
-    const cfg = eval(`(${this.definition})`) as Config
-    let data = ""
-    if (cfg.outputFormat === "json") {
-      data = `data:text/json;charset=utf-8,${encodeURIComponent(
-        JSON.stringify(this.results)
-      )}`
-    } else if (cfg.outputFormat === "png") {
-      const canvas = document.createElement("canvas") as HTMLCanvasElement
-      const widthElem = Math.max(1, Math.floor(this.width / (cfg.days - 1)))
-      const width = widthElem * (cfg.days - 1)
-      const ctx = canvas.getContext("2d")!
-      const src = this.ctx.getImageData(0, 0, width, this.height)
-      canvas.height = this.height
-      canvas.width = width
-      ctx.imageSmoothingEnabled = false
-      ctx.putImageData(src, 0, 0)
-      data = canvas
-        .toDataURL("image/png", 1)
-        .replace("image/png", "image/octet-stream")
+    const lines = []
+    const results = this.results
+    lines.push(
+      "Day,Healthy,Infected,Recovered,Immune,Dead,Isolated,App Installed"
+    )
+    for (let i = 0; i < results.length; i++) {
+      const stats = results[i]
+      lines.push(
+        `${i + 1},${stats.healthy},${stats.infected},${stats.recovered},${
+          stats.immune
+        },${stats.dead},${stats.isolated},${stats.installed}`
+      )
     }
-    const link = document.createElement("a")
-    link.download = `simulation-${getMethodID(this.method)}-${Date.now()}.${
-      cfg.outputFormat
-    }`
-    link.href = data
-    link.click()
+    const blob = new Blob([lines.join("\n")], {type: "text/csv;charset=utf-8"})
+    const filename = this.getFilename("csv")
+    triggerDownload(blob, filename)
+  }
+
+  downloadGraph() {
+    const node = this.$graph.cloneNode(true) as SVGElement
+    node.setAttribute("height", "100%")
+    node.setAttribute("width", "100%")
+    const svg = new XMLSerializer().serializeToString(node)
+    const filename = this.getFilename(this.cfg.imageFormat)
+    downloadImage({
+      filename,
+      format: this.cfg.imageFormat,
+      height: 1500,
+      svg,
+      width: 2400,
+    })
+  }
+
+  getFilename(ext: string) {
+    return `simulation-${getMethodID(this.method)}-${Date.now()}.${ext}`
   }
 
   handleMessage(resp: WorkerResponse) {
@@ -1618,7 +1644,7 @@ class Simulation {
     }
     this.results.push(resp.stats)
     this.markDirty()
-    if (this.results.length === this.days) {
+    if (this.results.length === this.cfg.days) {
       if (this.worker) {
         this.worker.terminate()
         this.worker = undefined
@@ -1644,9 +1670,11 @@ class Simulation {
     const $visibilityImage = <img src="show.svg" alt="Show" />
     this.$visibilityImage.replaceWith($visibilityImage)
     this.$visibilityImage = $visibilityImage
-    const $visibilitySpan = <span>Show Simulation</span>
+    const $visibilitySpan = <span>Show/Restart Simulation</span>
     this.$visibilitySpan.replaceWith($visibilitySpan)
     this.$visibilitySpan = $visibilitySpan
+    this.$root.addEventListener("click", this.handleToggle)
+    this.$root.classList.toggle("clickable")
     this.ctrl.setDimensions()
   }
 
@@ -1663,7 +1691,7 @@ class Simulation {
     if (!IN_BROWSER) {
       return
     }
-    if (this.hidden || configDisplayed || !this.dirty) {
+    if (this.hidden || overlayShown || !this.dirty) {
       return
     }
     this.dirty = false
@@ -1671,8 +1699,78 @@ class Simulation {
     this.renderGraph()
   }
 
+  renderGraph() {
+    if (!IN_BROWSER) {
+      return
+    }
+    const factor = 1
+    const height = factor * this.cfg.population
+    const results = this.results
+    const width = factor * this.cfg.days
+    const $graph = this.$graph
+    $graph.innerHTML = ""
+    addNode($graph, "rect", {
+      fill: "#eeeeee",
+      height: height,
+      width: width,
+      x: 0,
+      y: 0,
+    })
+    const days = results.length
+    if (days === 0) {
+      return
+    }
+    const end = factor * days
+    const healthy = []
+    const infected = []
+    const recovered = []
+    for (let i = 0; i < days; i++) {
+      const stats = results[i]
+      const posX = factor * i
+      let posY = stats.dead
+      recovered.push(`${posX},${posY}`)
+      posY += stats.recovered
+      healthy.push(`${posX},${posY}`)
+      posY += stats.healthy
+      infected.push(`${posX},${posY}`)
+    }
+    const last = results[days - 1]
+    const posX = factor * days
+    let posY = last.dead
+    recovered.push(`${posX},${posY}`)
+    recovered.push(`${end},${height}`)
+    recovered.push(`0,${height}`)
+    posY += last.recovered
+    healthy.push(`${posX},${posY}`)
+    healthy.push(`${end},${height}`)
+    healthy.push(`0,${height}`)
+    posY += last.healthy
+    infected.push(`${posX},${posY}`)
+    infected.push(`${end},${height}`)
+    infected.push(`0,${height}`)
+    addNode($graph, "rect", {
+      fill: COLOUR_DEAD,
+      height: height,
+      width: factor * days,
+      x: 0,
+      y: 0,
+    })
+    addNode($graph, "polyline", {
+      fill: COLOUR_RECOVERED,
+      points: recovered.join(" "),
+    })
+    addNode($graph, "polyline", {
+      fill: COLOUR_HEALTHY,
+      points: healthy.join(" "),
+    })
+    addNode($graph, "polyline", {
+      fill: COLOUR_INFECTED,
+      points: infected.join(" "),
+    })
+  }
+
   renderInfo(e: MouseEvent) {
-    const bounds = this.$canvas.getBoundingClientRect()
+    const bounds = this.$graph.getBoundingClientRect()
     const pos = e.clientX - bounds.left
     if (pos < 0 || pos > this.width) {
       if (this.handle) {
@@ -1680,7 +1778,7 @@ class Simulation {
       }
       return
     }
-    const width = Math.max(1, Math.floor(this.width / (this.days - 1)))
+    const width = this.width / this.cfg.days
     const day = Math.floor(pos / width)
     if (day >= this.results.length) {
       if (this.handle) {
@@ -1732,69 +1830,6 @@ class Simulation {
     this.handle = setTimeout(() => this.hideInfo(), 1200)
   }
 
-  renderGraph() {
-    if (!IN_BROWSER) {
-      return
-    }
-    const ctx = this.ctx
-    const height = this.height
-    const results = this.results
-    // Draw the background.
-    ctx.fillStyle = "#eeeeee"
-    ctx.fillRect(0, 0, this.width, height)
-    // Exit early if we don't have enough data to draw a graph.
-    if (results.length < 3) {
-      return
-    }
-    const days = results.length
-    const last = days - 1
-    const stats = results[last]
-    const total = stats.dead + stats.healthy + stats.infected + stats.recovered
-    const width = Math.max(1, Math.floor(this.width / (this.days - 1)))
-    for (let day = 1; day < days; day++) {
-      const cur = results[day]
-      const prevDay = day - 1
-      const prev = results[prevDay]
-      const curX = width * day
-      const prevX = width * prevDay
-      let stat = 0
-      let prevStat = 0
-      // Draw the dead.
-      ctx.fillStyle = COLOUR_DEAD
-      ctx.fillRect(prevX, 0, width, height)
-      stat += cur.dead / total
-      prevStat += prev.dead / total
-      // Draw the recovered.
-      ctx.fillStyle = COLOUR_RECOVERED
-      ctx.beginPath()
-      ctx.moveTo(prevX, prevStat * height)
-      ctx.lineTo(curX, stat * height)
-      ctx.lineTo(curX, height)
-      ctx.lineTo(prevX, height)
-      ctx.fill()
-      stat += cur.recovered / total
-      prevStat += prev.recovered / total
-      // Draw the healthy.
-      ctx.fillStyle = COLOUR_HEALTHY
-      ctx.beginPath()
-      ctx.moveTo(prevX, prevStat * height)
-      ctx.lineTo(curX, stat * height)
-      ctx.lineTo(curX, height)
-      ctx.lineTo(prevX, height)
-      ctx.fill()
-      stat += cur.healthy / total
-      prevStat += prev.healthy / total
-      // Draw the infected.
-      ctx.fillStyle = COLOUR_INFECTED
-      ctx.beginPath()
-      ctx.moveTo(prevX, prevStat * height)
-      ctx.lineTo(curX, stat * height)
-      ctx.lineTo(curX, height)
-      ctx.lineTo(prevX, height)
-      ctx.fill()
-    }
-  }
-
   renderSummary() {
     if (!IN_BROWSER) {
       return
@@ -1802,34 +1837,25 @@ class Simulation {
     if (this.results.length === 0) {
       return
     }
-    const results = this.results
-    const days = results.length
-    const last = results[results.length - 1]
-    const total = last.healthy + last.dead + last.recovered + last.infected
-    const healthy = (last.healthy / total) * 100
-    const infected = 100 - healthy
-    const dead = (last.dead / total) * 100
-    let isolated = 0
-    for (let i = 0; i < results.length; i++) {
-      isolated += results[i].isolated
-    }
-    isolated = (isolated / (days * total)) * 100
+    const summary = getSummary(this.results)
     const $summary = (
       <div class="summary">
         <div>
-          Days<div class="right">{days}</div>
+          Days<div class="right">{summary.days}</div>
         </div>
         <div>
-          Isolated<div class="right value">{percent(isolated)}</div>
+          Isolated<div class="right value">{percent(summary.isolated)}</div>
         </div>
         <div>
-          Healthy<div class="right value-healthy">{percent(healthy)}</div>
+          Healthy
+          <div class="right value-healthy">{percent(summary.healthy)}</div>
         </div>
         <div>
-          Infected<div class="right value-infected">{percent(infected)}</div>
+          Infected
+          <div class="right value-infected">{percent(summary.infected)}</div>
         </div>
         <div>
-          Dead<div class="right value-dead">{percent(dead)}</div>
+          Dead<div class="right value-dead">{percent(summary.dead)}</div>
         </div>
       </div>
     )
@@ -1837,21 +1863,25 @@ class Simulation {
     this.$summary = $summary
   }
 
-  run(cfg: string, days: number, id: number, rand: number) {
+  run(cfg: Config, definition: string, id: number, rand: number) {
     if (this.worker) {
       this.worker.terminate()
+    }
+    if (IN_BROWSER) {
+      this.$graph.setAttribute("viewBox", `0 0 ${cfg.days} ${cfg.population}`)
+      this.$summary.innerHTML = "&nbsp;"
     }
     if (this.hidden) {
       this.hidden = false
       show(this.$root)
     }
-    this.days = days
-    this.definition = cfg
+    this.cfg = cfg
+    this.definition = definition
     this.id = id
     this.results = []
     this.worker = new AbstractedWorker("./simulation.js")
     this.worker.onMessage((msg: WorkerResponse) => this.handleMessage(msg))
-    this.worker.postMessage({cfg, id, method: this.method, rand})
+    this.worker.postMessage({definition, id, method: this.method, rand})
     this.markDirty()
     hide(this.$download)
   }
@@ -1870,25 +1900,27 @@ class Simulation {
     if (width === this.width) {
       return
     }
-    this.$canvas.width = width
-    this.$canvas.style.height = `${this.height}px`
-    this.$canvas.style.width = `${width}px`
+    this.$graph.setAttribute("height", `${this.height}`)
+    this.$graph.setAttribute("width", `${width}`)
     this.width = width
     this.markDirty()
   }
 
   setupUI() {
-    const $canvas = <canvas class="graph" height={this.height}></canvas>
-    $canvas.addEventListener("mousemove", (e: MouseEvent) => this.renderInfo(e))
-    $canvas.addEventListener("mouseout", () => this.hideInfo())
+    this.handleToggle = (e: Event) => this.toggle(e)
     const $download = (
       <div class="action">
         <img src="download.svg" alt="Download" />
-        <span>Download File</span>
+        <span>Download Data</span>
       </div>
     )
     $download.addEventListener("click", () => this.download())
     hide($download)
+    const $graph = document.createElementNS(SVG, "svg")
+    $graph.addEventListener("mousemove", (e: MouseEvent) => this.renderInfo(e))
+    $graph.addEventListener("mouseout", () => this.hideInfo())
+    $graph.setAttribute("preserveAspectRatio", "none")
+    $graph.setAttribute("viewBox", "0 0 0 0")
     const $heading = <div class="heading">{this.heading}</div>
     const $info = <div class="info"></div>
     const $run = (
@@ -1907,19 +1939,19 @@ class Simulation {
     $settings.addEventListener("click", displayConfig)
     const $summary = <div class="summary"></div>
     const $visibilityImage = <img src="hide.svg" alt="Hide" />
-    const $visibilitySpan = <span>Hide Simulation</span>
+    const $visibilitySpan = <span>Hide/Stop Simulation</span>
     const $visibility = (
       <div class="action">
         {$visibilityImage}
         {$visibilitySpan}
       </div>
     )
-    $visibility.addEventListener("click", (e: Event) => this.toggle())
+    $visibility.addEventListener("click", this.handleToggle)
     const $content = (
       <div class="content">
         {$info}
         {$summary}
-        {$canvas}
+        <div class="graph">{$graph}</div>
       </div>
     )
     const $root = (
@@ -1934,12 +1966,9 @@ class Simulation {
         <div class="clear"></div>
       </div>
     )
-    const ctx = $canvas.getContext("2d") as CanvasRenderingContext2D
-    ctx.imageSmoothingEnabled = false
-    this.ctx = ctx
-    this.$canvas = $canvas
     this.$content = $content
     this.$download = $download
+    this.$graph = $graph
     this.$heading = $heading
     this.$info = $info
     this.$root = $root
@@ -1963,15 +1992,20 @@ class Simulation {
     const $visibilityImage = <img src="hide.svg" alt="Hide" />
     this.$visibilityImage.replaceWith($visibilityImage)
     this.$visibilityImage = $visibilityImage
-    const $visibilitySpan = <span>Hide Simulation</span>
+    const $visibilitySpan = <span>Hide/Stop Simulation</span>
     this.$visibilitySpan.replaceWith($visibilitySpan)
     this.$visibilitySpan = $visibilitySpan
+    this.$root.removeEventListener("click", this.handleToggle)
+    this.$root.classList.toggle("clickable")
     const ctrl = this.ctrl
     ctrl.setDimensions()
-    this.run(ctrl.definition, ctrl.cfg.days, ctrl.id, ctrl.rand)
+    this.run(ctrl.cfg, ctrl.definition, ctrl.id, ctrl.rand)
   }
 
-  toggle() {
+  toggle(e: Event) {
+    if (e) {
+      e.stopPropagation()
+    }
     if (this.hidden) {
       this.show()
     } else {
@@ -2014,10 +2048,22 @@ function $(id: string) {
   return document.getElementById(id)!
 }
 
+function addNode(dst: SVGElement, typ: string, attrs: Record<string, any>) {
+  const node = document.createElementNS(SVG, typ)
+  if (attrs) {
+    const keys = Object.keys(attrs)
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i]
+      node.setAttribute(key, attrs[key])
+    }
+  }
+  dst.appendChild(node)
+}
+
 function defaultConfig(): Config {
   return {
     // the portion of people who have an Apple/Google-style Contact Tracing app installed
-    appleGoogleInstalled: 0.6,
+    appleGoogleInstalled: 2 / 3,
     // distribution of the number of clusters for a person
     clusterCount: new ZipfDistribution({min: 1, max: 20}),
     // distribution of the number of "primary" members in a cluster
@@ -2027,13 +2073,13 @@ function defaultConfig(): Config {
     // number of days to run the simulation
     days: 400,
     // the likelihood of a SafetyScore user being okay with visiting a non-gate-kept cluster
-    exposedVisit: 0.1,
+    exposedVisit: 1 / 5,
     // likelihood of dying once infected
     fatalityRisk: 0.01,
     // daily likelihood of someone in the whole population getting infected from outside the population
     foreignImports: 0.06,
     // the portion of clusters who gate-keep access via SafetyScore
-    gatekeptClusters: 0.6,
+    gatekeptClusters: 1 / 3,
     // the SafetyScore level needed to access a gate-kept cluster
     gatekeptThreshold: 50,
     // distribution of the group size within a cluster for a single period
@@ -2042,12 +2088,16 @@ function defaultConfig(): Config {
     household: new PoissonDistribution({mean: 2.1, min: 1, max: 6}),
     // distribution of illness days after incubation
     illness: new NormalDistribution({mean: 10.5, min: 7}),
+    // format of the generated image file, can be "png" or "svg"
+    imageFormat: "png",
     // distribution of the days of natural immunity
     immunity: new NormalDistribution({mean: 238, min: 0}),
     // likelihood of someone getting infected during a single contact
     infectionRisk: 0.01,
     // likelihood of someone installing SafetyScore for visiting a foreign gate-kept cluster
     installForeign: 0,
+    // likelihood of someone installing SafetyScore if one of their own clusters becomes gate-kept
+    installOwn: 0,
     // whether the app is installed for the whole household during initial installations
     installHousehold: false,
     // isolate whole household if someone self-isolates
@@ -2063,7 +2113,7 @@ function defaultConfig(): Config {
     // the SafetyScore level below which one is notified to self-isolate and test
     isolationThreshold: 50,
     // likelihood of a symptomatic individual self-isolating
-    isolationSymptomatic: 1,
+    isolationSymptomatic: 0.9,
     // portion of the population who will not be isolated during lockdown
     keyWorkers: 0.16,
     // the number of infected people, below which a lockdown could end
@@ -2072,8 +2122,6 @@ function defaultConfig(): Config {
     lockdownEndWindow: 14,
     // the number of infected people which will trigger a lockdown
     lockdownStart: 15,
-    // format of the generated output file, can be "json" or "png"
-    outputFormat: "png",
     // total number of people
     population: 10000,
     // number of days before becoming infectious
@@ -2082,14 +2130,16 @@ function defaultConfig(): Config {
     preSymptomaticInfectiousDays: 3,
     // portion of clusters which are public
     publicClusters: 0.15,
+    // number of runs to execute
+    runs: 5,
     // the portion of people who have SafetyScore installed at the start
-    safetyScoreInstalled: 0,
+    safetyScoreInstalled: 2 / 3,
     // a multiplicative weighting factor for second-degree tokens
     secondDegreeWeight: 1,
     // likelihood of a symptomatic person self-attesting
     selfAttestation: 0,
     // the portion of people who become symptomatic
-    symptomatic: 0.2,
+    symptomatic: 1 / 3,
     // the distribution of the delay days between symptomatic/notified and testing
     testDelay: new PoissonDistribution({mean: 2, min: 1, max: 10}),
     // test all key workers
@@ -2124,10 +2174,10 @@ function defaultConfigDefinition() {
 }
 
 function displayConfig() {
-  if (configDisplayed || !ctrl) {
+  if (overlayShown || !ctrl) {
     return
   }
-  configDisplayed = true
+  overlayShown = true
   ctrl.pause()
   if (!$config) {
     $config = $("config") as HTMLTextAreaElement
@@ -2135,10 +2185,51 @@ function displayConfig() {
   }
   $config.value = ctrl.definition
   updateMirror(ctrl.definition)
-  $("overlay").style.display = "block"
+  $("inlay").style.display = "flex"
+  show($("overlay"))
   $config.focus()
   $config.scrollTop = 0
   $config.setSelectionRange(0, 0)
+}
+
+function downloadImage(img: {
+  filename: string
+  format: string
+  height: number
+  svg: string
+  width: number
+}) {
+  if (img.format === "svg") {
+    const blob = new Blob([img.svg], {type: "image/svg+xml"})
+    triggerDownload(blob, img.filename)
+  } else {
+    downloadPNG(img.svg, img.filename, img.height, img.width)
+  }
+}
+
+function downloadPNG(
+  svg: string,
+  filename: string,
+  height: number,
+  width: number
+) {
+  const blob = new Blob([svg], {type: "image/svg+xml"})
+  const canvas = document.createElement("canvas")
+  const ctx = canvas.getContext("2d")!
+  const img = new Image(width, height)
+  const url = URL.createObjectURL(blob)
+  canvas.height = height
+  canvas.width = width
+  img.onload = () => {
+    URL.revokeObjectURL(url)
+    ctx.drawImage(img, 0, 0)
+    canvas.toBlob((blob) => {
+      if (blob) {
+        triggerDownload(blob, filename)
+      }
+    })
+  }
+  img.src = url
 }
 
 function genSVG(colors: string) {
@@ -2221,12 +2312,43 @@ function getMethodLabel(method: number) {
   throw `Unknown method: ${method}`
 }
 
+function getSummary(results: Stats[]) {
+  const days = results.length
+  const last = results[results.length - 1]
+  const total = last.healthy + last.dead + last.recovered + last.infected
+  const healthy = (last.healthy / total) * 100
+  const infected = 100 - healthy
+  const dead = (last.dead / total) * 100
+  let isolated = 0
+  for (let i = 0; i < results.length; i++) {
+    isolated += results[i].isolated
+  }
+  isolated = (isolated / (days * total)) * 100
+  return {
+    days,
+    dead,
+    healthy,
+    infected,
+    isolated,
+    population: total,
+  }
+}
+
 function getZeta(n: number, theta: number) {
   let sum = 0
   for (let i = 0; i < n; i++) {
     sum += 1 / Math.pow(i + 1, theta)
   }
   return sum
+}
+
+function greyscale(colour: string) {
+  let grey = parseInt(colour.slice(1, 3), 16)
+  grey += parseInt(colour.slice(3, 5), 16)
+  grey += parseInt(colour.slice(5, 7), 16)
+  grey = Math.ceil(grey / 3)
+  const hex = grey.toString(16)
+  return `#${hex}${hex}${hex}`
 }
 
 function h(
@@ -2265,7 +2387,7 @@ function handleInlayClick(e: Event) {
 }
 
 function handleKeyboard(e: KeyboardEvent) {
-  if (configDisplayed) {
+  if (overlayShown) {
     if (e.code === "Escape") {
       handleOverlayClick()
       return
@@ -2290,10 +2412,10 @@ function handleOverlayClick(e?: Event) {
   if (e) {
     e.stopPropagation()
   }
-  if (!configDisplayed) {
+  if (!overlayShown) {
     return
   }
-  configDisplayed = false
+  overlayShown = false
   $("error").style.display = "none"
   $("overlay").style.display = "none"
   if (ctrl) {
@@ -2350,6 +2472,13 @@ function printDistribution(dist: Distribution) {
   }
 }
 
+function printUsage() {
+  console.log(`Usage: simulation [OPTIONS]
+
+  --config FILE    path to a config file
+`)
+}
+
 function scrollEditor() {
   $mirror.scrollTop = $config.scrollTop
 }
@@ -2378,10 +2507,19 @@ function shuffle(array: Array<any>, rng: RNG) {
 }
 
 function syncEditor() {
-  if (!configDisplayed) {
+  if (!overlayShown) {
     return
   }
   updateMirror($config.value)
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.download = filename
+  link.href = url
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 300000)
 }
 
 function trimpx(v: string) {
@@ -2395,7 +2533,7 @@ function updateConfig(e?: Event) {
   if (e) {
     e.stopPropagation()
   }
-  if (!configDisplayed) {
+  if (!overlayShown) {
     return
   }
   const $config = $("config") as HTMLTextAreaElement
@@ -2409,7 +2547,7 @@ function updateConfig(e?: Event) {
     $error.style.display = "block"
     return
   }
-  configDisplayed = false
+  overlayShown = false
   $("overlay").style.display = "none"
   ctrl.resume()
   ctrl.runNew(cfg, definition)
@@ -2432,15 +2570,18 @@ function validateConfig(cfg: Config) {
     "immunity",
     "testDelay",
   ])
-  v.validateNumber([
-    "days",
-    "isolationDays",
+  v.validateNumber(0, [
     "lockdownEnd",
     "lockdownEndWindow",
-    "lockdownStart",
-    "population",
     "preInfectiousDays",
     "preSymptomaticInfectiousDays",
+  ])
+  v.validateNumber(1, [
+    "days",
+    "isolationDays",
+    "lockdownStart",
+    "population",
+    "runs",
   ])
   v.validatePercentage([
     "appleGoogleInstalled",
@@ -2451,6 +2592,7 @@ function validateConfig(cfg: Config) {
     "gatekeptClusters",
     "infectionRisk",
     "installForeign",
+    "installOwn",
     "isolationEffectiveness",
     "isolationLikelihood",
     "isolationLockdown",
@@ -2469,7 +2611,7 @@ function validateConfig(cfg: Config) {
     "visitPublicCluster",
   ])
   v.validateScore(["gatekeptThreshold", "isolationThreshold"])
-  v.validateStringValue("outputFormat", ["json", "png", "svg"])
+  v.validateStringValue("imageFormat", ["png", "svg"])
   v.checkFields()
   return cfg
 }
@@ -2516,6 +2658,13 @@ function main() {
     const worker = require("worker_threads")
     const multi = getCmdOpt("--multi", "")
     if (multi) {
+      if (process.argv.length === 2) {
+        printUsage()
+        process.exit()
+      }
+      const configFile = getCmdOpt("--config", "")
+      if (configFile !== "") {
+      }
       const method = getMethod(getCmdOpt("--method", "safetyscore"))
       runMulti(parseInt(multi, 10), method)
       return
