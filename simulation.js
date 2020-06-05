@@ -36,7 +36,7 @@ var CLUSTER_PUBLIC = 2;
 // Time spent in clusters during a day.
 var CLUSTER_PERIODS = 8;
 // User interface colours.
-var COLOUR_DEAD = "#444444";
+var COLOUR_DEAD = "#000000";
 var COLOUR_HEALTHY = "#8bb4b8";
 var COLOUR_INFECTED = "#ff3945";
 var COLOUR_RECOVERED = "#009d51";
@@ -60,6 +60,8 @@ var STATUS_IMMUNE = 16;
 var STATUS_DEAD = 32;
 var STATUS_ISOLATED = 64;
 var STATUS_QUARANTINED = 128;
+// SVG namespace.
+var SVG = "http://www.w3.org/2000/svg";
 // Visual ordering of methods.
 var METHODS = [
     METHOD_FREE_MOVEMENT,
@@ -67,8 +69,8 @@ var METHODS = [
     METHOD_SAFETYSCORE,
     METHOD_LOCKDOWN,
 ];
-var configDisplayed = false;
 var ctrl;
+var overlayShown = false;
 var parentPort;
 var $config;
 var $mirror;
@@ -140,7 +142,7 @@ var ConfigValidator = /** @class */ (function () {
             }
         });
     };
-    ConfigValidator.prototype.validateNumber = function (fields) {
+    ConfigValidator.prototype.validateNumber = function (min, fields) {
         this.validate(fields, function (field, val) {
             if (typeof val !== "number") {
                 throw "The value for \"" + field + "\" must be a number";
@@ -148,8 +150,8 @@ var ConfigValidator = /** @class */ (function () {
             if (Math.floor(val) !== val) {
                 throw "The value for \"" + field + "\" must be a whole number";
             }
-            if (val < 1) {
-                throw "The value for \"" + field + "\" must be greater than 1";
+            if (val < min) {
+                throw "The value for \"" + field + "\" must be greater than " + min;
             }
         });
     };
@@ -193,6 +195,7 @@ var Controller = /** @class */ (function () {
         this.cfg = defaultConfig();
         this.definition = defaultConfigDefinition();
         this.id = 1;
+        this.multi = false;
         this.rand = 1591164094719;
         this.paused = false;
         this.simList = [];
@@ -240,6 +243,9 @@ var Controller = /** @class */ (function () {
     };
     Controller.prototype.requestRedraw = function () {
         var _this = this;
+        if (!IN_BROWSER) {
+            return;
+        }
         if (this.handle) {
             return;
         }
@@ -250,11 +256,10 @@ var Controller = /** @class */ (function () {
         this.requestRedraw();
     };
     Controller.prototype.run = function () {
-        var cfg = this.cfg;
         for (var i = 0; i < this.simList.length; i++) {
             var sim = this.simList[i];
             if (!sim.hidden) {
-                sim.run(this.definition, cfg.days, this.id, this.rand);
+                sim.run(this.cfg, this.definition, this.id, this.rand);
             }
         }
     };
@@ -265,6 +270,9 @@ var Controller = /** @class */ (function () {
         this.run();
     };
     Controller.prototype.setDimensions = function () {
+        if (!IN_BROWSER) {
+            return;
+        }
         for (var i = 0; i < this.simList.length; i++) {
             this.simList[i].setDimensions();
         }
@@ -291,6 +299,7 @@ var Model = /** @class */ (function () {
             infect: new RNG("infect-" + rand),
             init: new RNG("init-" + rand),
             installForeign: new RNG("installForeign-" + rand),
+            installOwn: new RNG("installOwn-" + rand),
             isolationEffectiveness: new RNG("isolationEffectiveness-" + rand),
             isolationLikelihood: new RNG("isolationLikelihood-" + rand),
             isolationLockdown: new RNG("isolationLockdown-" + rand),
@@ -314,7 +323,7 @@ var Model = /** @class */ (function () {
         };
     };
     Model.prototype.handleMessage = function (req) {
-        this.cfg = eval("(" + req.cfg + ")");
+        this.cfg = eval("(" + req.definition + ")");
         this.id = req.id;
         this.method = req.method;
         this.rand = req.rand;
@@ -450,13 +459,13 @@ var Model = /** @class */ (function () {
         }
         // Make certain clusters gatekept and install SafetyScore to all members.
         if (this.method === METHOD_SAFETYSCORE) {
-            var installed = 0;
+            var converted = 0;
             var convert = new Set();
             var limit = Math.round(cfg.gatekeptClusters * cfg.population);
             var gatekept = clusters.slice(0);
             shuffle(gatekept, rng.shuffle);
             for (i = 0; i < gatekept.length; i++) {
-                if (installed >= limit) {
+                if (converted >= limit) {
                     break;
                 }
                 var cluster = gatekept[i];
@@ -465,9 +474,10 @@ var Model = /** @class */ (function () {
                     var id = cluster.members[j];
                     var member = people[id];
                     if (!convert.has(id)) {
-                        installed++;
+                        converted++;
                         convert.add(id);
-                        if (member.installSafetyScore(0)) {
+                        if (rng.installOwn.next() <= cfg.installOwn &&
+                            member.installSafetyScore(0)) {
                             installBase++;
                         }
                     }
@@ -520,6 +530,7 @@ var Model = /** @class */ (function () {
                     cfg.preSymptomaticInfectiousDays +
                     Math.round(getMean(cfg.illness)) +
                     1;
+            traceDays = 14;
         }
         var meanContacts = getMean(cfg.clusterCount) * getMean(cfg.clusterSize) +
             getMean(cfg.groupSize) *
@@ -1300,7 +1311,6 @@ var RNG = /** @class */ (function () {
 var Simulation = /** @class */ (function () {
     function Simulation(ctrl, method) {
         this.ctrl = ctrl;
-        this.days = 0;
         this.dirty = true;
         this.heading = getMethodLabel(method);
         this.height = 300;
@@ -1310,29 +1320,33 @@ var Simulation = /** @class */ (function () {
         this.width = 0;
     }
     Simulation.prototype.download = function () {
-        var cfg = eval("(" + this.definition + ")");
-        var data = "";
-        if (cfg.outputFormat === "json") {
-            data = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.results));
+        var lines = [];
+        var results = this.results;
+        lines.push("Day,Healthy,Infected,Recovered,Immune,Dead,Isolated,App Installed");
+        for (var i = 0; i < results.length; i++) {
+            var stats = results[i];
+            lines.push(i + 1 + "," + stats.healthy + "," + stats.infected + "," + stats.recovered + "," + stats.immune + "," + stats.dead + "," + stats.isolated + "," + stats.installed);
         }
-        else if (cfg.outputFormat === "png") {
-            var canvas = document.createElement("canvas");
-            var widthElem = Math.max(1, Math.floor(this.width / (cfg.days - 1)));
-            var width = widthElem * (cfg.days - 1);
-            var ctx = canvas.getContext("2d");
-            var src = this.ctx.getImageData(0, 0, width, this.height);
-            canvas.height = this.height;
-            canvas.width = width;
-            ctx.imageSmoothingEnabled = false;
-            ctx.putImageData(src, 0, 0);
-            data = canvas
-                .toDataURL("image/png", 1)
-                .replace("image/png", "image/octet-stream");
-        }
-        var link = document.createElement("a");
-        link.download = "simulation-" + getMethodID(this.method) + "-" + Date.now() + "." + cfg.outputFormat;
-        link.href = data;
-        link.click();
+        var blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+        var filename = this.getFilename("csv");
+        triggerDownload(blob, filename);
+    };
+    Simulation.prototype.downloadGraph = function () {
+        var node = this.$graph.cloneNode(true);
+        node.setAttribute("height", "100%");
+        node.setAttribute("width", "100%");
+        var svg = new XMLSerializer().serializeToString(node);
+        var filename = this.getFilename(this.cfg.imageFormat);
+        downloadImage({
+            filename: filename,
+            format: this.cfg.imageFormat,
+            height: 1500,
+            svg: svg,
+            width: 2400,
+        });
+    };
+    Simulation.prototype.getFilename = function (ext) {
+        return "simulation-" + getMethodID(this.method) + "-" + Date.now() + "." + ext;
     };
     Simulation.prototype.handleMessage = function (resp) {
         if (this.id !== resp.id) {
@@ -1340,7 +1354,7 @@ var Simulation = /** @class */ (function () {
         }
         this.results.push(resp.stats);
         this.markDirty();
-        if (this.results.length === this.days) {
+        if (this.results.length === this.cfg.days) {
             if (this.worker) {
                 this.worker.terminate();
                 this.worker = undefined;
@@ -1365,9 +1379,11 @@ var Simulation = /** @class */ (function () {
         var $visibilityImage = h("img", { src: "show.svg", alt: "Show" });
         this.$visibilityImage.replaceWith($visibilityImage);
         this.$visibilityImage = $visibilityImage;
-        var $visibilitySpan = h("span", null, "Show Simulation");
+        var $visibilitySpan = h("span", null, "Show/Restart Simulation");
         this.$visibilitySpan.replaceWith($visibilitySpan);
         this.$visibilitySpan = $visibilitySpan;
+        this.$root.addEventListener("click", this.handleToggle);
+        this.$root.classList.toggle("clickable");
         this.ctrl.setDimensions();
     };
     Simulation.prototype.hideInfo = function () {
@@ -1381,16 +1397,85 @@ var Simulation = /** @class */ (function () {
         if (!IN_BROWSER) {
             return;
         }
-        if (this.hidden || configDisplayed || !this.dirty) {
+        if (this.hidden || overlayShown || !this.dirty) {
             return;
         }
         this.dirty = false;
         this.renderSummary();
         this.renderGraph();
     };
+    Simulation.prototype.renderGraph = function () {
+        if (!IN_BROWSER) {
+            return;
+        }
+        var factor = 1;
+        var height = factor * this.cfg.population;
+        var results = this.results;
+        var width = factor * this.cfg.days;
+        var $graph = this.$graph;
+        $graph.innerHTML = "";
+        addNode($graph, "rect", {
+            fill: "#eeeeee",
+            height: height,
+            width: width,
+            x: 0,
+            y: 0,
+        });
+        var days = results.length;
+        if (days === 0) {
+            return;
+        }
+        var end = factor * days;
+        var healthy = [];
+        var infected = [];
+        var recovered = [];
+        for (var i = 0; i < days; i++) {
+            var stats = results[i];
+            var posX_1 = factor * i;
+            var posY_1 = stats.dead;
+            recovered.push(posX_1 + "," + posY_1);
+            posY_1 += stats.recovered;
+            healthy.push(posX_1 + "," + posY_1);
+            posY_1 += stats.healthy;
+            infected.push(posX_1 + "," + posY_1);
+        }
+        var last = results[days - 1];
+        var posX = factor * days;
+        var posY = last.dead;
+        recovered.push(posX + "," + posY);
+        recovered.push(end + "," + height);
+        recovered.push("0," + height);
+        posY += last.recovered;
+        healthy.push(posX + "," + posY);
+        healthy.push(end + "," + height);
+        healthy.push("0," + height);
+        posY += last.healthy;
+        infected.push(posX + "," + posY);
+        infected.push(end + "," + height);
+        infected.push("0," + height);
+        addNode($graph, "rect", {
+            fill: COLOUR_DEAD,
+            height: height,
+            width: factor * days,
+            x: 0,
+            y: 0,
+        });
+        addNode($graph, "polyline", {
+            fill: COLOUR_RECOVERED,
+            points: recovered.join(" "),
+        });
+        addNode($graph, "polyline", {
+            fill: COLOUR_HEALTHY,
+            points: healthy.join(" "),
+        });
+        addNode($graph, "polyline", {
+            fill: COLOUR_INFECTED,
+            points: infected.join(" "),
+        });
+    };
     Simulation.prototype.renderInfo = function (e) {
         var _this = this;
-        var bounds = this.$canvas.getBoundingClientRect();
+        var bounds = this.$graph.getBoundingClientRect();
         var pos = e.clientX - bounds.left;
         if (pos < 0 || pos > this.width) {
             if (this.handle) {
@@ -1398,7 +1483,7 @@ var Simulation = /** @class */ (function () {
             }
             return;
         }
-        var width = Math.max(1, Math.floor(this.width / (this.days - 1)));
+        var width = this.width / this.cfg.days;
         var day = Math.floor(pos / width);
         if (day >= this.results.length) {
             if (this.handle) {
@@ -1442,68 +1527,6 @@ var Simulation = /** @class */ (function () {
         show(this.$info);
         this.handle = setTimeout(function () { return _this.hideInfo(); }, 1200);
     };
-    Simulation.prototype.renderGraph = function () {
-        if (!IN_BROWSER) {
-            return;
-        }
-        var ctx = this.ctx;
-        var height = this.height;
-        var results = this.results;
-        // Draw the background.
-        ctx.fillStyle = "#eeeeee";
-        ctx.fillRect(0, 0, this.width, height);
-        // Exit early if we don't have enough data to draw a graph.
-        if (results.length < 3) {
-            return;
-        }
-        var days = results.length;
-        var last = days - 1;
-        var stats = results[last];
-        var total = stats.dead + stats.healthy + stats.infected + stats.recovered;
-        var width = Math.max(1, Math.floor(this.width / (this.days - 1)));
-        for (var day = 1; day < days; day++) {
-            var cur = results[day];
-            var prevDay = day - 1;
-            var prev = results[prevDay];
-            var curX = width * day;
-            var prevX = width * prevDay;
-            var stat = 0;
-            var prevStat = 0;
-            // Draw the dead.
-            ctx.fillStyle = COLOUR_DEAD;
-            ctx.fillRect(prevX, 0, width, height);
-            stat += cur.dead / total;
-            prevStat += prev.dead / total;
-            // Draw the recovered.
-            ctx.fillStyle = COLOUR_RECOVERED;
-            ctx.beginPath();
-            ctx.moveTo(prevX, prevStat * height);
-            ctx.lineTo(curX, stat * height);
-            ctx.lineTo(curX, height);
-            ctx.lineTo(prevX, height);
-            ctx.fill();
-            stat += cur.recovered / total;
-            prevStat += prev.recovered / total;
-            // Draw the healthy.
-            ctx.fillStyle = COLOUR_HEALTHY;
-            ctx.beginPath();
-            ctx.moveTo(prevX, prevStat * height);
-            ctx.lineTo(curX, stat * height);
-            ctx.lineTo(curX, height);
-            ctx.lineTo(prevX, height);
-            ctx.fill();
-            stat += cur.healthy / total;
-            prevStat += prev.healthy / total;
-            // Draw the infected.
-            ctx.fillStyle = COLOUR_INFECTED;
-            ctx.beginPath();
-            ctx.moveTo(prevX, prevStat * height);
-            ctx.lineTo(curX, stat * height);
-            ctx.lineTo(curX, height);
-            ctx.lineTo(prevX, height);
-            ctx.fill();
-        }
-    };
     Simulation.prototype.renderSummary = function () {
         if (!IN_BROWSER) {
             return;
@@ -1511,53 +1534,46 @@ var Simulation = /** @class */ (function () {
         if (this.results.length === 0) {
             return;
         }
-        var results = this.results;
-        var days = results.length;
-        var last = results[results.length - 1];
-        var total = last.healthy + last.dead + last.recovered + last.infected;
-        var healthy = (last.healthy / total) * 100;
-        var infected = 100 - healthy;
-        var dead = (last.dead / total) * 100;
-        var isolated = 0;
-        for (var i = 0; i < results.length; i++) {
-            isolated += results[i].isolated;
-        }
-        isolated = (isolated / (days * total)) * 100;
+        var summary = getSummary(this.results);
         var $summary = (h("div", { class: "summary" },
             h("div", null,
                 "Days",
-                h("div", { class: "right" }, days)),
+                h("div", { class: "right" }, summary.days)),
             h("div", null,
                 "Isolated",
-                h("div", { class: "right value" }, percent(isolated))),
+                h("div", { class: "right value" }, percent(summary.isolated))),
             h("div", null,
                 "Healthy",
-                h("div", { class: "right value-healthy" }, percent(healthy))),
+                h("div", { class: "right value-healthy" }, percent(summary.healthy))),
             h("div", null,
                 "Infected",
-                h("div", { class: "right value-infected" }, percent(infected))),
+                h("div", { class: "right value-infected" }, percent(summary.infected))),
             h("div", null,
                 "Dead",
-                h("div", { class: "right value-dead" }, percent(dead)))));
+                h("div", { class: "right value-dead" }, percent(summary.dead)))));
         this.$summary.replaceWith($summary);
         this.$summary = $summary;
     };
-    Simulation.prototype.run = function (cfg, days, id, rand) {
+    Simulation.prototype.run = function (cfg, definition, id, rand) {
         var _this = this;
         if (this.worker) {
             this.worker.terminate();
+        }
+        if (IN_BROWSER) {
+            this.$graph.setAttribute("viewBox", "0 0 " + cfg.days + " " + cfg.population);
+            this.$summary.innerHTML = "&nbsp;";
         }
         if (this.hidden) {
             this.hidden = false;
             show(this.$root);
         }
-        this.days = days;
-        this.definition = cfg;
+        this.cfg = cfg;
+        this.definition = definition;
         this.id = id;
         this.results = [];
         this.worker = new AbstractedWorker("./simulation.js");
         this.worker.onMessage(function (msg) { return _this.handleMessage(msg); });
-        this.worker.postMessage({ cfg: cfg, id: id, method: this.method, rand: rand });
+        this.worker.postMessage({ definition: definition, id: id, method: this.method, rand: rand });
         this.markDirty();
         hide(this.$download);
     };
@@ -1575,22 +1591,24 @@ var Simulation = /** @class */ (function () {
         if (width === this.width) {
             return;
         }
-        this.$canvas.width = width;
-        this.$canvas.style.height = this.height + "px";
-        this.$canvas.style.width = width + "px";
+        this.$graph.setAttribute("height", "" + this.height);
+        this.$graph.setAttribute("width", "" + width);
         this.width = width;
         this.markDirty();
     };
     Simulation.prototype.setupUI = function () {
         var _this = this;
-        var $canvas = h("canvas", { class: "graph", height: this.height });
-        $canvas.addEventListener("mousemove", function (e) { return _this.renderInfo(e); });
-        $canvas.addEventListener("mouseout", function () { return _this.hideInfo(); });
+        this.handleToggle = function (e) { return _this.toggle(e); };
         var $download = (h("div", { class: "action" },
             h("img", { src: "download.svg", alt: "Download" }),
-            h("span", null, "Download File")));
+            h("span", null, "Download Data")));
         $download.addEventListener("click", function () { return _this.download(); });
         hide($download);
+        var $graph = document.createElementNS(SVG, "svg");
+        $graph.addEventListener("mousemove", function (e) { return _this.renderInfo(e); });
+        $graph.addEventListener("mouseout", function () { return _this.hideInfo(); });
+        $graph.setAttribute("preserveAspectRatio", "none");
+        $graph.setAttribute("viewBox", "0 0 0 0");
         var $heading = h("div", { class: "heading" }, this.heading);
         var $info = h("div", { class: "info" });
         var $run = (h("div", { class: "action" },
@@ -1603,15 +1621,15 @@ var Simulation = /** @class */ (function () {
         $settings.addEventListener("click", displayConfig);
         var $summary = h("div", { class: "summary" });
         var $visibilityImage = h("img", { src: "hide.svg", alt: "Hide" });
-        var $visibilitySpan = h("span", null, "Hide Simulation");
+        var $visibilitySpan = h("span", null, "Hide/Stop Simulation");
         var $visibility = (h("div", { class: "action" },
             $visibilityImage,
             $visibilitySpan));
-        $visibility.addEventListener("click", function (e) { return _this.toggle(); });
+        $visibility.addEventListener("click", this.handleToggle);
         var $content = (h("div", { class: "content" },
             $info,
             $summary,
-            $canvas));
+            h("div", { class: "graph" }, $graph)));
         var $root = (h("div", { class: "simulation" },
             $heading,
             $visibility,
@@ -1621,12 +1639,9 @@ var Simulation = /** @class */ (function () {
             h("div", { class: "clear" }),
             $content,
             h("div", { class: "clear" })));
-        var ctx = $canvas.getContext("2d");
-        ctx.imageSmoothingEnabled = false;
-        this.ctx = ctx;
-        this.$canvas = $canvas;
         this.$content = $content;
         this.$download = $download;
+        this.$graph = $graph;
         this.$heading = $heading;
         this.$info = $info;
         this.$root = $root;
@@ -1649,14 +1664,19 @@ var Simulation = /** @class */ (function () {
         var $visibilityImage = h("img", { src: "hide.svg", alt: "Hide" });
         this.$visibilityImage.replaceWith($visibilityImage);
         this.$visibilityImage = $visibilityImage;
-        var $visibilitySpan = h("span", null, "Hide Simulation");
+        var $visibilitySpan = h("span", null, "Hide/Stop Simulation");
         this.$visibilitySpan.replaceWith($visibilitySpan);
         this.$visibilitySpan = $visibilitySpan;
+        this.$root.removeEventListener("click", this.handleToggle);
+        this.$root.classList.toggle("clickable");
         var ctrl = this.ctrl;
         ctrl.setDimensions();
-        this.run(ctrl.definition, ctrl.cfg.days, ctrl.id, ctrl.rand);
+        this.run(ctrl.cfg, ctrl.definition, ctrl.id, ctrl.rand);
     };
-    Simulation.prototype.toggle = function () {
+    Simulation.prototype.toggle = function (e) {
+        if (e) {
+            e.stopPropagation();
+        }
         if (this.hidden) {
             this.show();
         }
@@ -1691,10 +1711,21 @@ var ZipfDistribution = /** @class */ (function () {
 function $(id) {
     return document.getElementById(id);
 }
+function addNode(dst, typ, attrs) {
+    var node = document.createElementNS(SVG, typ);
+    if (attrs) {
+        var keys = Object.keys(attrs);
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            node.setAttribute(key, attrs[key]);
+        }
+    }
+    dst.appendChild(node);
+}
 function defaultConfig() {
     return {
         // the portion of people who have an Apple/Google-style Contact Tracing app installed
-        appleGoogleInstalled: 0.6,
+        appleGoogleInstalled: 2 / 3,
         // distribution of the number of clusters for a person
         clusterCount: new ZipfDistribution({ min: 1, max: 20 }),
         // distribution of the number of "primary" members in a cluster
@@ -1704,13 +1735,13 @@ function defaultConfig() {
         // number of days to run the simulation
         days: 400,
         // the likelihood of a SafetyScore user being okay with visiting a non-gate-kept cluster
-        exposedVisit: 0.1,
+        exposedVisit: 1 / 5,
         // likelihood of dying once infected
         fatalityRisk: 0.01,
         // daily likelihood of someone in the whole population getting infected from outside the population
         foreignImports: 0.06,
         // the portion of clusters who gate-keep access via SafetyScore
-        gatekeptClusters: 0.6,
+        gatekeptClusters: 1 / 3,
         // the SafetyScore level needed to access a gate-kept cluster
         gatekeptThreshold: 50,
         // distribution of the group size within a cluster for a single period
@@ -1719,12 +1750,16 @@ function defaultConfig() {
         household: new PoissonDistribution({ mean: 2.1, min: 1, max: 6 }),
         // distribution of illness days after incubation
         illness: new NormalDistribution({ mean: 10.5, min: 7 }),
+        // format of the generated image file, can be "png" or "svg"
+        imageFormat: "png",
         // distribution of the days of natural immunity
         immunity: new NormalDistribution({ mean: 238, min: 0 }),
         // likelihood of someone getting infected during a single contact
         infectionRisk: 0.01,
         // likelihood of someone installing SafetyScore for visiting a foreign gate-kept cluster
         installForeign: 0,
+        // likelihood of someone installing SafetyScore if one of their own clusters becomes gate-kept
+        installOwn: 0,
         // whether the app is installed for the whole household during initial installations
         installHousehold: false,
         // isolate whole household if someone self-isolates
@@ -1740,7 +1775,7 @@ function defaultConfig() {
         // the SafetyScore level below which one is notified to self-isolate and test
         isolationThreshold: 50,
         // likelihood of a symptomatic individual self-isolating
-        isolationSymptomatic: 1,
+        isolationSymptomatic: 0.9,
         // portion of the population who will not be isolated during lockdown
         keyWorkers: 0.16,
         // the number of infected people, below which a lockdown could end
@@ -1749,8 +1784,6 @@ function defaultConfig() {
         lockdownEndWindow: 14,
         // the number of infected people which will trigger a lockdown
         lockdownStart: 15,
-        // format of the generated output file, can be "json" or "png"
-        outputFormat: "png",
         // total number of people
         population: 10000,
         // number of days before becoming infectious
@@ -1759,14 +1792,16 @@ function defaultConfig() {
         preSymptomaticInfectiousDays: 3,
         // portion of clusters which are public
         publicClusters: 0.15,
+        // number of runs to execute
+        runs: 5,
         // the portion of people who have SafetyScore installed at the start
-        safetyScoreInstalled: 0,
+        safetyScoreInstalled: 2 / 3,
         // a multiplicative weighting factor for second-degree tokens
         secondDegreeWeight: 1,
         // likelihood of a symptomatic person self-attesting
         selfAttestation: 0,
         // the portion of people who become symptomatic
-        symptomatic: 0.2,
+        symptomatic: 1 / 3,
         // the distribution of the delay days between symptomatic/notified and testing
         testDelay: new PoissonDistribution({ mean: 2, min: 1, max: 10 }),
         // test all key workers
@@ -1799,10 +1834,10 @@ function defaultConfigDefinition() {
     return cfg + "\n}";
 }
 function displayConfig() {
-    if (configDisplayed || !ctrl) {
+    if (overlayShown || !ctrl) {
         return;
     }
-    configDisplayed = true;
+    overlayShown = true;
     ctrl.pause();
     if (!$config) {
         $config = $("config");
@@ -1810,10 +1845,39 @@ function displayConfig() {
     }
     $config.value = ctrl.definition;
     updateMirror(ctrl.definition);
-    $("overlay").style.display = "block";
+    $("inlay").style.display = "flex";
+    show($("overlay"));
     $config.focus();
     $config.scrollTop = 0;
     $config.setSelectionRange(0, 0);
+}
+function downloadImage(img) {
+    if (img.format === "svg") {
+        var blob = new Blob([img.svg], { type: "image/svg+xml" });
+        triggerDownload(blob, img.filename);
+    }
+    else {
+        downloadPNG(img.svg, img.filename, img.height, img.width);
+    }
+}
+function downloadPNG(svg, filename, height, width) {
+    var blob = new Blob([svg], { type: "image/svg+xml" });
+    var canvas = document.createElement("canvas");
+    var ctx = canvas.getContext("2d");
+    var img = new Image(width, height);
+    var url = URL.createObjectURL(blob);
+    canvas.height = height;
+    canvas.width = width;
+    img.onload = function () {
+        URL.revokeObjectURL(url);
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(function (blob) {
+            if (blob) {
+                triggerDownload(blob, filename);
+            }
+        });
+    };
+    img.src = url;
 }
 function genSVG(colors) {
     var out = ["<svg>"];
@@ -1888,12 +1952,41 @@ function getMethodLabel(method) {
     }
     throw "Unknown method: " + method;
 }
+function getSummary(results) {
+    var days = results.length;
+    var last = results[results.length - 1];
+    var total = last.healthy + last.dead + last.recovered + last.infected;
+    var healthy = (last.healthy / total) * 100;
+    var infected = 100 - healthy;
+    var dead = (last.dead / total) * 100;
+    var isolated = 0;
+    for (var i = 0; i < results.length; i++) {
+        isolated += results[i].isolated;
+    }
+    isolated = (isolated / (days * total)) * 100;
+    return {
+        days: days,
+        dead: dead,
+        healthy: healthy,
+        infected: infected,
+        isolated: isolated,
+        population: total,
+    };
+}
 function getZeta(n, theta) {
     var sum = 0;
     for (var i = 0; i < n; i++) {
         sum += 1 / Math.pow(i + 1, theta);
     }
     return sum;
+}
+function greyscale(colour) {
+    var grey = parseInt(colour.slice(1, 3), 16);
+    grey += parseInt(colour.slice(3, 5), 16);
+    grey += parseInt(colour.slice(5, 7), 16);
+    grey = Math.ceil(grey / 3);
+    var hex = grey.toString(16);
+    return "#" + hex + hex + hex;
 }
 function h(tag, props) {
     var children = [];
@@ -1932,7 +2025,7 @@ function handleInlayClick(e) {
     e.stopPropagation();
 }
 function handleKeyboard(e) {
-    if (configDisplayed) {
+    if (overlayShown) {
         if (e.code === "Escape") {
             handleOverlayClick();
             return;
@@ -1956,10 +2049,10 @@ function handleOverlayClick(e) {
     if (e) {
         e.stopPropagation();
     }
-    if (!configDisplayed) {
+    if (!overlayShown) {
         return;
     }
-    configDisplayed = false;
+    overlayShown = false;
     $("error").style.display = "none";
     $("overlay").style.display = "none";
     if (ctrl) {
@@ -2022,6 +2115,9 @@ function printDistribution(dist) {
         finally { if (e_1) throw e_1.error; }
     }
 }
+function printUsage() {
+    console.log("Usage: simulation [OPTIONS]\n\n  --config FILE    path to a config file\n");
+}
 function scrollEditor() {
     $mirror.scrollTop = $config.scrollTop;
 }
@@ -2048,10 +2144,18 @@ function shuffle(array, rng) {
     }
 }
 function syncEditor() {
-    if (!configDisplayed) {
+    if (!overlayShown) {
         return;
     }
     updateMirror($config.value);
+}
+function triggerDownload(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.download = filename;
+    link.href = url;
+    link.click();
+    setTimeout(function () { return URL.revokeObjectURL(url); }, 300000);
 }
 function trimpx(v) {
     if (!v.endsWith("px")) {
@@ -2063,7 +2167,7 @@ function updateConfig(e) {
     if (e) {
         e.stopPropagation();
     }
-    if (!configDisplayed) {
+    if (!overlayShown) {
         return;
     }
     var $config = $("config");
@@ -2078,7 +2182,7 @@ function updateConfig(e) {
         $error.style.display = "block";
         return;
     }
-    configDisplayed = false;
+    overlayShown = false;
     $("overlay").style.display = "none";
     ctrl.resume();
     ctrl.runNew(cfg, definition);
@@ -2099,15 +2203,18 @@ function validateConfig(cfg) {
         "immunity",
         "testDelay",
     ]);
-    v.validateNumber([
-        "days",
-        "isolationDays",
+    v.validateNumber(0, [
         "lockdownEnd",
         "lockdownEndWindow",
-        "lockdownStart",
-        "population",
         "preInfectiousDays",
         "preSymptomaticInfectiousDays",
+    ]);
+    v.validateNumber(1, [
+        "days",
+        "isolationDays",
+        "lockdownStart",
+        "population",
+        "runs",
     ]);
     v.validatePercentage([
         "appleGoogleInstalled",
@@ -2118,6 +2225,7 @@ function validateConfig(cfg) {
         "gatekeptClusters",
         "infectionRisk",
         "installForeign",
+        "installOwn",
         "isolationEffectiveness",
         "isolationLikelihood",
         "isolationLockdown",
@@ -2136,7 +2244,7 @@ function validateConfig(cfg) {
         "visitPublicCluster",
     ]);
     v.validateScore(["gatekeptThreshold", "isolationThreshold"]);
-    v.validateStringValue("outputFormat", ["json", "png", "svg"]);
+    v.validateStringValue("imageFormat", ["png", "svg"]);
     v.checkFields();
     return cfg;
 }
@@ -2194,6 +2302,13 @@ function main() {
         var worker = require("worker_threads");
         var multi = getCmdOpt("--multi", "");
         if (multi) {
+            if (process.argv.length === 2) {
+                printUsage();
+                process.exit();
+            }
+            var configFile = getCmdOpt("--config", "");
+            if (configFile !== "") {
+            }
             var method = getMethod(getCmdOpt("--method", "safetyscore"));
             runMulti(parseInt(multi, 10), method);
             return;
