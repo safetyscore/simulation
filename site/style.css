@@ -127,11 +127,16 @@ textarea::-webkit-scrollbar {
   width: 0;
 }
 
+.clickable:hover {
+  cursor: pointer;
+}
+
 .content {
   position: relative;
 }
 
 .graph {
+  height: 300px;
   float: left;
 }
 
@@ -162,6 +167,7 @@ textarea::-webkit-scrollbar {
 .simulation {
   background: #fff;
   margin-bottom: 20px;
+  min-width: 500px;
   user-select: none;
 }
 
