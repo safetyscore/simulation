@@ -12,6 +12,17 @@ html {
   width: 100%;
 }
 
+a {
+  border-bottom: 1px dashed #444444;
+  color: #444444;
+  padding-bottom: 3px;
+  text-decoration: none;
+}
+
+a:hover {
+  border-bottom: 1px dashed transparent;
+}
+
 button {
   background: #009d51;
   border: 0;
@@ -152,6 +163,7 @@ textarea::-webkit-scrollbar {
   position: absolute;
   top: 0;
   width: 200px;
+  z-index: 5;
 }
 
 .refresh {
@@ -171,9 +183,18 @@ textarea::-webkit-scrollbar {
   user-select: none;
 }
 
+.status {
+  padding: 0 20px 0 20px;
+  position: absolute;
+  top: 263px;
+  width: 200px;
+}
+
 .summary {
   float: left;
-  padding: 0 20px 0 12px;
+  height: 300px;
+  padding: 0 20px 0 20px;
+  position: relative;
   width: 200px;
 }
 

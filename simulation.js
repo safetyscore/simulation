@@ -178,6 +178,13 @@ var ConfigValidator = /** @class */ (function () {
             }
         });
     };
+    ConfigValidator.prototype.validateString = function (fields) {
+        this.validate(fields, function (field, val) {
+            if (typeof val !== "string") {
+                throw "The value for \"" + field + "\" must be a string";
+            }
+        });
+    };
     ConfigValidator.prototype.validateStringValue = function (field, values) {
         this.seen.add(field);
         var val = this.cfg[field];
@@ -1317,6 +1324,7 @@ var Simulation = /** @class */ (function () {
         this.hidden = false;
         this.method = method;
         this.results = [];
+        this.tableShown = false;
         this.width = 0;
     }
     Simulation.prototype.download = function () {
@@ -1331,19 +1339,87 @@ var Simulation = /** @class */ (function () {
         var filename = this.getFilename("csv");
         triggerDownload(blob, filename);
     };
-    Simulation.prototype.downloadGraph = function () {
-        var node = this.$graph.cloneNode(true);
-        node.setAttribute("height", "100%");
-        node.setAttribute("width", "100%");
-        var svg = new XMLSerializer().serializeToString(node);
-        var filename = this.getFilename(this.cfg.imageFormat);
-        downloadImage({
-            filename: filename,
-            format: this.cfg.imageFormat,
-            height: 1500,
-            svg: svg,
-            width: 2400,
-        });
+    Simulation.prototype.downloadGraph = function (format) {
+        var _this = this;
+        var filename = this.getFilename(format);
+        var graph = this.$graph.cloneNode(true);
+        graph.setAttribute("height", "100%");
+        graph.setAttribute("width", "100%");
+        var svg = new XMLSerializer().serializeToString(graph);
+        var blob = new Blob([svg], { type: "image/svg+xml" });
+        if (format === "svg") {
+            triggerDownload(blob, filename);
+            return;
+        }
+        var legend = 300;
+        var canvas = document.createElement("canvas");
+        var ctx = canvas.getContext("2d");
+        var height = 1500;
+        var summary = getSummary(this.results);
+        var width = 2400;
+        var img = new Image(width, height);
+        var url = URL.createObjectURL(blob);
+        canvas.height = height + legend;
+        canvas.width = width;
+        img.onload = function () {
+            URL.revokeObjectURL(url);
+            var bottomline = height + 210;
+            var fifth = width / 5;
+            var font = "60px bold " + _this.cfg.imageFont;
+            var midline = height + 75;
+            var topline = height + 130;
+            var textpad = 120;
+            var posX = 70;
+            // Draw blank area at bottom of the canvas for the legend.
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(0, 0, width, height + legend);
+            // Draw the graph.
+            ctx.drawImage(img, 0, 0, width, height);
+            // Draw the legend for healthy.
+            ctx.fillStyle = COLOUR_HEALTHY;
+            ctx.fillRect(posX, midline, 100, 100);
+            ctx.fillStyle = "#000";
+            ctx.font = font;
+            ctx.fillText("Healthy", posX + textpad, topline);
+            ctx.fillText("" + percent(summary.healthy), posX + textpad, bottomline);
+            // Draw the legend for infected.
+            posX += fifth;
+            ctx.fillStyle = COLOUR_INFECTED;
+            ctx.fillRect(posX, midline, 100, 100);
+            ctx.fillStyle = "#000";
+            ctx.font = font;
+            ctx.fillText("Infected", posX + textpad, topline);
+            ctx.fillText("" + percent(summary.infected), posX + textpad, bottomline);
+            // Draw the legend for recovered.
+            posX += fifth;
+            ctx.fillStyle = COLOUR_RECOVERED;
+            ctx.fillRect(posX, midline, 100, 100);
+            ctx.fillStyle = "#000";
+            ctx.font = font;
+            ctx.fillText("Recovered", posX + textpad, topline);
+            // Draw the legend for dead.
+            posX += fifth;
+            ctx.fillStyle = COLOUR_DEAD;
+            ctx.fillRect(posX, midline, 100, 100);
+            ctx.fillStyle = "#000";
+            ctx.font = font;
+            ctx.fillText("Dead", posX + textpad, topline);
+            ctx.fillText("" + percent(summary.dead), posX + textpad, bottomline);
+            // Draw the legend for isolated.
+            posX += fifth;
+            ctx.fillStyle = "#eeeeee";
+            ctx.fillRect(posX, midline, 100, 100);
+            ctx.fillStyle = "#000";
+            ctx.font = font;
+            ctx.fillText("Isolated", posX + textpad, topline);
+            ctx.fillText("" + percent(summary.isolated), posX + textpad, bottomline);
+            canvas.toBlob(function (blob) {
+                if (blob) {
+                    triggerDownload(blob, filename);
+                }
+            });
+        };
+        img.src = url;
     };
     Simulation.prototype.getFilename = function (ext) {
         return "simulation-" + getMethodID(this.method) + "-" + Date.now() + "." + ext;
@@ -1388,6 +1464,11 @@ var Simulation = /** @class */ (function () {
     };
     Simulation.prototype.hideInfo = function () {
         hide(this.$info);
+    };
+    Simulation.prototype.hideTable = function () {
+        this.tableShown = false;
+        this.$tableLink.innerHTML = "Show All";
+        console.log("table hidden");
     };
     Simulation.prototype.markDirty = function () {
         this.dirty = true;
@@ -1602,7 +1683,7 @@ var Simulation = /** @class */ (function () {
         var $download = (h("div", { class: "action" },
             h("img", { src: "download.svg", alt: "Download" }),
             h("span", null, "Download Data")));
-        $download.addEventListener("click", function () { return _this.download(); });
+        $download.addEventListener("click", function () { return _this.downloadGraph("png"); });
         hide($download);
         var $graph = document.createElementNS(SVG, "svg");
         $graph.addEventListener("mousemove", function (e) { return _this.renderInfo(e); });
@@ -1615,10 +1696,15 @@ var Simulation = /** @class */ (function () {
             h("img", { class: "refresh", src: "refresh.svg", alt: "Refresh" }),
             h("span", null, "Run New Simulation")));
         $run.addEventListener("click", function (e) { return _this.ctrl.randomise(); });
+        var $tableLink = h("a", { href: "" }, "See All");
+        $tableLink.addEventListener("click", function (e) { return _this.toggleTable(e); });
         var $settings = (h("div", { class: "action" },
             h("img", { src: "settings.svg", alt: "Settings" }),
             h("span", null, "Edit Config")));
         $settings.addEventListener("click", displayConfig);
+        var $status = (h("div", { class: "status" },
+            "Running 1 of 5",
+            h("div", { class: "right value" }, $tableLink)));
         var $summary = h("div", { class: "summary" });
         var $visibilityImage = h("img", { src: "hide.svg", alt: "Hide" });
         var $visibilitySpan = h("span", null, "Hide/Stop Simulation");
@@ -1629,7 +1715,8 @@ var Simulation = /** @class */ (function () {
         var $content = (h("div", { class: "content" },
             $info,
             $summary,
-            h("div", { class: "graph" }, $graph)));
+            h("div", { class: "graph" }, $graph),
+            $status));
         var $root = (h("div", { class: "simulation" },
             $heading,
             $visibility,
@@ -1648,6 +1735,7 @@ var Simulation = /** @class */ (function () {
         this.$run = $run;
         this.$settings = $settings;
         this.$summary = $summary;
+        this.$tableLink = $tableLink;
         this.$visibilityImage = $visibilityImage;
         this.$visibilitySpan = $visibilitySpan;
         return $root;
@@ -1673,6 +1761,10 @@ var Simulation = /** @class */ (function () {
         ctrl.setDimensions();
         this.run(ctrl.cfg, ctrl.definition, ctrl.id, ctrl.rand);
     };
+    Simulation.prototype.showTable = function () {
+        this.tableShown = true;
+        this.$tableLink.innerHTML = "Hide All";
+    };
     Simulation.prototype.toggle = function (e) {
         if (e) {
             e.stopPropagation();
@@ -1682,6 +1774,15 @@ var Simulation = /** @class */ (function () {
         }
         else {
             this.hide();
+        }
+    };
+    Simulation.prototype.toggleTable = function (e) {
+        e.preventDefault();
+        if (this.tableShown) {
+            this.hideTable();
+        }
+        else {
+            this.showTable();
         }
     };
     return Simulation;
@@ -1721,6 +1822,7 @@ function addNode(dst, typ, attrs) {
         }
     }
     dst.appendChild(node);
+    return node;
 }
 function defaultConfig() {
     return {
@@ -1750,8 +1852,8 @@ function defaultConfig() {
         household: new PoissonDistribution({ mean: 2.1, min: 1, max: 6 }),
         // distribution of illness days after incubation
         illness: new NormalDistribution({ mean: 10.5, min: 7 }),
-        // format of the generated image file, can be "png" or "svg"
-        imageFormat: "png",
+        // font to use on labels in generated images
+        imageFont: "HelveticaNeue-Light, Arial",
         // distribution of the days of natural immunity
         immunity: new NormalDistribution({ mean: 238, min: 0 }),
         // likelihood of someone getting infected during a single contact
@@ -2244,7 +2346,7 @@ function validateConfig(cfg) {
         "visitPublicCluster",
     ]);
     v.validateScore(["gatekeptThreshold", "isolationThreshold"]);
-    v.validateStringValue("imageFormat", ["png", "svg"]);
+    v.validateString(["imageFont"]);
     v.checkFields();
     return cfg;
 }
