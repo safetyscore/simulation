@@ -60,6 +60,7 @@ let $mirror: HTMLPreElement
 
 declare namespace JSX {
   interface IntrinsicElements {
+    a: ElemProps
     div: ElemProps
     img: ElemProps
     span: ElemProps
@@ -117,7 +118,7 @@ interface Config {
   lockdownEnd: number
   lockdownEndWindow: number
   lockdownStart: number
-  imageFormat: "png" | "svg"
+  imageFont: string
   population: number
   preInfectiousDays: number
   preSymptomaticInfectiousDays: number
@@ -146,6 +147,7 @@ interface ElemProps {
   onclick?: (ev: Event) => void
   alt?: string
   height?: number | string
+  href?: string
   class?: string
   src?: string
   width?: string
@@ -332,6 +334,14 @@ class ConfigValidator {
       }
       if (val < 0 || val > 100) {
         throw `The value for "${field}" must be between 0 and 100`
+      }
+    })
+  }
+
+  validateString(fields: string[]) {
+    this.validate(fields, (field, val) => {
+      if (typeof val !== "string") {
+        throw `The value for "${field}" must be a string`
       }
     })
   }
@@ -1574,6 +1584,7 @@ class Simulation {
   method: number
   progress: number
   results: Stats[]
+  tableShown: boolean
   width: number
   worker?: AbstractedWorker
   $boxplot: SVGElement
@@ -1586,6 +1597,7 @@ class Simulation {
   $run: HTMLElement
   $settings: HTMLElement
   $summary: HTMLElement
+  $tableLink: HTMLElement
   $visibilityImage: HTMLElement
   $visibilitySpan: HTMLElement
 
@@ -1597,6 +1609,7 @@ class Simulation {
     this.hidden = false
     this.method = method
     this.results = []
+    this.tableShown = false
     this.width = 0
   }
 
@@ -1619,19 +1632,86 @@ class Simulation {
     triggerDownload(blob, filename)
   }
 
-  downloadGraph() {
-    const node = this.$graph.cloneNode(true) as SVGElement
-    node.setAttribute("height", "100%")
-    node.setAttribute("width", "100%")
-    const svg = new XMLSerializer().serializeToString(node)
-    const filename = this.getFilename(this.cfg.imageFormat)
-    downloadImage({
-      filename,
-      format: this.cfg.imageFormat,
-      height: 1500,
-      svg,
-      width: 2400,
-    })
+  downloadGraph(format: string) {
+    const filename = this.getFilename(format)
+    const graph = this.$graph.cloneNode(true) as SVGElement
+    graph.setAttribute("height", "100%")
+    graph.setAttribute("width", "100%")
+    const svg = new XMLSerializer().serializeToString(graph)
+    const blob = new Blob([svg], {type: "image/svg+xml"})
+    if (format === "svg") {
+      triggerDownload(blob, filename)
+      return
+    }
+    const legend = 300
+    const canvas = document.createElement("canvas")
+    const ctx = canvas.getContext("2d")!
+    const height = 1500
+    const summary = getSummary(this.results)
+    const width = 2400
+    const img = new Image(width, height)
+    const url = URL.createObjectURL(blob)
+    canvas.height = height + legend
+    canvas.width = width
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const bottomline = height + 210
+      const fifth = width / 5
+      const font = `60px bold ${this.cfg.imageFont}`
+      const midline = height + 75
+      const topline = height + 130
+      const textpad = 120
+      let posX = 70
+      // Draw blank area at bottom of the canvas for the legend.
+      ctx.fillStyle = "#fff"
+      ctx.fillRect(0, 0, width, height + legend)
+      // Draw the graph.
+      ctx.drawImage(img, 0, 0, width, height)
+      // Draw the legend for healthy.
+      ctx.fillStyle = COLOUR_HEALTHY
+      ctx.fillRect(posX, midline, 100, 100)
+      ctx.fillStyle = "#000"
+      ctx.font = font
+      ctx.fillText("Healthy", posX + textpad, topline)
+      ctx.fillText(`${percent(summary.healthy)}`, posX + textpad, bottomline)
+      // Draw the legend for infected.
+      posX += fifth
+      ctx.fillStyle = COLOUR_INFECTED
+      ctx.fillRect(posX, midline, 100, 100)
+      ctx.fillStyle = "#000"
+      ctx.font = font
+      ctx.fillText("Infected", posX + textpad, topline)
+      ctx.fillText(`${percent(summary.infected)}`, posX + textpad, bottomline)
+      // Draw the legend for recovered.
+      posX += fifth
+      ctx.fillStyle = COLOUR_RECOVERED
+      ctx.fillRect(posX, midline, 100, 100)
+      ctx.fillStyle = "#000"
+      ctx.font = font
+      ctx.fillText("Recovered", posX + textpad, topline)
+      // Draw the legend for dead.
+      posX += fifth
+      ctx.fillStyle = COLOUR_DEAD
+      ctx.fillRect(posX, midline, 100, 100)
+      ctx.fillStyle = "#000"
+      ctx.font = font
+      ctx.fillText("Dead", posX + textpad, topline)
+      ctx.fillText(`${percent(summary.dead)}`, posX + textpad, bottomline)
+      // Draw the legend for isolated.
+      posX += fifth
+      ctx.fillStyle = "#eeeeee"
+      ctx.fillRect(posX, midline, 100, 100)
+      ctx.fillStyle = "#000"
+      ctx.font = font
+      ctx.fillText("Isolated", posX + textpad, topline)
+      ctx.fillText(`${percent(summary.isolated)}`, posX + textpad, bottomline)
+      canvas.toBlob((blob) => {
+        if (blob) {
+          triggerDownload(blob, filename)
+        }
+      })
+    }
+    img.src = url
   }
 
   getFilename(ext: string) {
@@ -1680,6 +1760,12 @@ class Simulation {
 
   hideInfo() {
     hide(this.$info)
+  }
+
+  hideTable() {
+    this.tableShown = false
+    this.$tableLink.innerHTML = "Show All"
+    console.log("table hidden")
   }
 
   markDirty() {
@@ -1914,7 +2000,7 @@ class Simulation {
         <span>Download Data</span>
       </div>
     )
-    $download.addEventListener("click", () => this.download())
+    $download.addEventListener("click", () => this.downloadGraph("png"))
     hide($download)
     const $graph = document.createElementNS(SVG, "svg")
     $graph.addEventListener("mousemove", (e: MouseEvent) => this.renderInfo(e))
@@ -1930,6 +2016,8 @@ class Simulation {
       </div>
     )
     $run.addEventListener("click", (e: any) => this.ctrl.randomise())
+    const $tableLink = <a href="">See All</a>
+    $tableLink.addEventListener("click", (e: Event) => this.toggleTable(e))
     const $settings = (
       <div class="action">
         <img src="settings.svg" alt="Settings" />
@@ -1937,6 +2025,11 @@ class Simulation {
       </div>
     )
     $settings.addEventListener("click", displayConfig)
+    const $status = (
+      <div class="status">
+        Running 1 of 5<div class="right value">{$tableLink}</div>
+      </div>
+    )
     const $summary = <div class="summary"></div>
     const $visibilityImage = <img src="hide.svg" alt="Hide" />
     const $visibilitySpan = <span>Hide/Stop Simulation</span>
@@ -1952,6 +2045,7 @@ class Simulation {
         {$info}
         {$summary}
         <div class="graph">{$graph}</div>
+        {$status}
       </div>
     )
     const $root = (
@@ -1975,6 +2069,7 @@ class Simulation {
     this.$run = $run
     this.$settings = $settings
     this.$summary = $summary
+    this.$tableLink = $tableLink
     this.$visibilityImage = $visibilityImage
     this.$visibilitySpan = $visibilitySpan
     return $root
@@ -2002,6 +2097,11 @@ class Simulation {
     this.run(ctrl.cfg, ctrl.definition, ctrl.id, ctrl.rand)
   }
 
+  showTable() {
+    this.tableShown = true
+    this.$tableLink.innerHTML = "Hide All"
+  }
+
   toggle(e: Event) {
     if (e) {
       e.stopPropagation()
@@ -2010,6 +2110,15 @@ class Simulation {
       this.show()
     } else {
       this.hide()
+    }
+  }
+
+  toggleTable(e: Event) {
+    e.preventDefault()
+    if (this.tableShown) {
+      this.hideTable()
+    } else {
+      this.showTable()
     }
   }
 }
@@ -2058,6 +2167,7 @@ function addNode(dst: SVGElement, typ: string, attrs: Record<string, any>) {
     }
   }
   dst.appendChild(node)
+  return node
 }
 
 function defaultConfig(): Config {
@@ -2088,8 +2198,8 @@ function defaultConfig(): Config {
     household: new PoissonDistribution({mean: 2.1, min: 1, max: 6}),
     // distribution of illness days after incubation
     illness: new NormalDistribution({mean: 10.5, min: 7}),
-    // format of the generated image file, can be "png" or "svg"
-    imageFormat: "png",
+    // font to use on labels in generated images
+    imageFont: "HelveticaNeue-Light, Arial",
     // distribution of the days of natural immunity
     immunity: new NormalDistribution({mean: 238, min: 0}),
     // likelihood of someone getting infected during a single contact
@@ -2611,7 +2721,7 @@ function validateConfig(cfg: Config) {
     "visitPublicCluster",
   ])
   v.validateScore(["gatekeptThreshold", "isolationThreshold"])
-  v.validateStringValue("imageFormat", ["png", "svg"])
+  v.validateString(["imageFont"])
   v.checkFields()
   return cfg
 }
