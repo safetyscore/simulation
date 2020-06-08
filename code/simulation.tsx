@@ -5,8 +5,8 @@ const IN_BROWSER = typeof self === "object"
 const IN_WORKER = typeof importScripts === "function"
 
 // Attribute values for clusters.
-const CLUSTER_GATEKEPT = 1
-const CLUSTER_PUBLIC = 2
+const CLUSTER_PUBLIC = 1
+const CLUSTER_SAFEGUARDED = 2
 
 // Time spent in clusters during a day.
 const CLUSTER_PERIODS = 8
@@ -79,6 +79,14 @@ declare namespace Prism {
   let languages: Record<string, string>
 }
 
+interface BoxPlot {
+  max: number
+  median: number
+  min: number
+  q1: number
+  q3: number
+}
+
 interface Cluster {
   attrs: number
   members: number[]
@@ -102,8 +110,6 @@ interface Config {
   exposedVisit: number
   fatalityRisk: number
   foreignImports: number
-  gatekeptClusters: number
-  gatekeptThreshold: number
   groupSize: Distribution
   household: Distribution
   illness: Distribution
@@ -128,7 +134,11 @@ interface Config {
   preInfectiousDays: number
   preSymptomaticInfectiousDays: number
   publicClusters: number
-  runs: number
+  runsMax: number
+  runsMin: number
+  runsVariance: number
+  safeguardThreshold: number
+  safeguardedClusters: number
   safetyScoreInstalled: number
   secondDegreeWeight: number
   selfAttestation: number
@@ -156,6 +166,11 @@ interface ElemProps {
   class?: string
   src?: string
   width?: string
+}
+
+interface MinMax {
+  max: number
+  min: number
 }
 
 interface NodeEventEmitter {
@@ -224,15 +239,28 @@ interface Summary {
   population: number
 }
 
+interface SummaryBoxPlot {
+  dead: BoxPlot
+  healthy: BoxPlot
+  infected: BoxPlot
+  isolated: BoxPlot
+}
+
+interface SummaryRange {
+  dead: MinMax
+  healthy: MinMax
+  infected: MinMax
+  isolated: MinMax
+}
+
 interface WorkerRequest {
   definition: string
-  id: number
   method: number
   rand: number
 }
 
 interface WorkerResponse {
-  id: number
+  rand: number
   stats: Stats
 }
 
@@ -377,20 +405,18 @@ class Controller {
   cfg: Config
   definition: string
   handle: number
-  id: number
   paused: boolean
-  multi: boolean
   rand: number
+  range: SummaryRange
   sims: Record<number, Simulation>
   simList: Simulation[]
   $main: HTMLElement
 
   constructor() {
-    this.cfg = defaultConfig()
+    const cfg = defaultConfig()
+    this.cfg = cfg
     this.definition = defaultConfigDefinition()
-    this.id = 1
-    this.multi = false
-    this.rand = 1591164094719
+    this.rand = 1591652858672 + 4
     this.paused = false
     this.simList = []
     this.sims = {}
@@ -427,7 +453,6 @@ class Controller {
   }
 
   randomise() {
-    this.id++
     this.rand = Date.now()
     console.log(`Using random seed: ${this.rand}`)
     this.run()
@@ -458,10 +483,16 @@ class Controller {
   }
 
   run() {
+    this.range = {
+      dead: {max: -1, min: -1},
+      healthy: {max: -1, min: -1},
+      infected: {max: -1, min: -1},
+      isolated: {max: -1, min: -1},
+    }
     for (let i = 0; i < this.simList.length; i++) {
       const sim = this.simList[i]
       if (!sim.hidden) {
-        sim.run(this.cfg, this.definition, this.id, this.rand)
+        sim.run(this.cfg, this.definition, this.rand)
       }
     }
   }
@@ -469,7 +500,7 @@ class Controller {
   runNew(cfg: Config, definition: string) {
     this.cfg = cfg
     this.definition = definition
-    this.id++
+    this.rand = Date.now()
     this.run()
   }
 
@@ -480,6 +511,14 @@ class Controller {
     for (let i = 0; i < this.simList.length; i++) {
       this.simList[i].setDimensions()
     }
+  }
+
+  updateRange(summary: Summary) {
+    const range = this.range
+    updateMinMax(range.dead, summary.dead)
+    updateMinMax(range.healthy, summary.healthy)
+    updateMinMax(range.infected, summary.infected)
+    updateMinMax(range.isolated, summary.isolated)
   }
 }
 
@@ -551,7 +590,6 @@ class Model {
 
   handleMessage(req: WorkerRequest) {
     this.cfg = eval(`(${req.definition})`)
-    this.id = req.id
     this.method = req.method
     this.rand = req.rand
     if (this.handle) {
@@ -683,19 +721,19 @@ class Model {
         }
       }
     }
-    // Make certain clusters gatekept and install SafetyScore to all members.
+    // Make certain clusters safeguarded and install SafetyScore to all members.
     if (this.method === METHOD_SAFETYSCORE) {
       let converted = 0
       const convert = new Set()
-      const limit = Math.round(cfg.gatekeptClusters * cfg.population)
-      const gatekept = clusters.slice(0)
-      shuffle(gatekept, rng.shuffle)
-      for (i = 0; i < gatekept.length; i++) {
+      const limit = Math.round(cfg.safeguardedClusters * cfg.population)
+      const safeguarded = clusters.slice(0)
+      shuffle(safeguarded, rng.shuffle)
+      for (i = 0; i < safeguarded.length; i++) {
         if (converted >= limit) {
           break
         }
-        const cluster = gatekept[i]
-        cluster.attrs |= CLUSTER_GATEKEPT
+        const cluster = safeguarded[i]
+        cluster.attrs |= CLUSTER_SAFEGUARDED
         for (let j = 0; j < cluster.members.length; j++) {
           const id = cluster.members[j]
           const member = people[id]
@@ -1233,17 +1271,17 @@ class Model {
       }
       if (method === METHOD_SAFETYSCORE) {
         const cluster = clusters[clusterID]
-        if ((cluster.attrs & CLUSTER_GATEKEPT) === 0) {
-          // If the person has SafetyScore and the cluster isn't gate-kept, see
-          // if they'll consider visiting it. We don't consider this an isolated
-          // period as it's a free choice by the individual.
+        if ((cluster.attrs & CLUSTER_SAFEGUARDED) === 0) {
+          // If the person has SafetyScore and the cluster isn't safeguarded,
+          // see if they'll consider visiting it. We don't consider this an
+          // isolated period as it's a free choice by the individual.
           if ((person.attrs & PERSON_APP_INSTALLED) !== 0) {
             if (!(rng.exposedVisit.next() <= cfg.exposedVisit)) {
               continue
             }
           }
         } else {
-          // For a gate-kept cluster, if the user doesn't have the app
+          // For a safeguarded cluster, if the user doesn't have the app
           // installed, see if they will consider installing it.
           if ((person.attrs & PERSON_APP_INSTALLED) === 0) {
             person.attrs |= PERSON_APP_FOREIGN_CLUSTER
@@ -1251,7 +1289,7 @@ class Model {
           }
           // If they do have the app, check if their score meets the necessary
           // level.
-          if (person.score <= cfg.gatekeptThreshold) {
+          if (person.score <= cfg.safeguardThreshold) {
             continue
           }
         }
@@ -1330,7 +1368,7 @@ class Model {
     for (let i = 0; i < this.cfg.days; i++) {
       if (this.period === 0) {
         const stats = this.nextDay()
-        sendMessage({id: this.id, stats})
+        sendMessage({rand: this.rand, stats})
       }
       for (let j = 0; j < CLUSTER_PERIODS; j++) {
         this.nextPeriod()
@@ -1596,10 +1634,12 @@ class Simulation {
   rand: number
   results: Stats[]
   runs: Stats[][]
+  runsFinished: boolean
   runsUpdate: boolean
   selected: number
   summaries: Summary[]
   summariesShown: boolean
+  variance: number
   width: number
   worker?: AbstractedWorker
   $boxplot: SVGElement
@@ -1629,11 +1669,51 @@ class Simulation {
     this.method = method
     this.results = []
     this.runs = []
+    this.runsFinished = false
     this.runsUpdate = false
     this.selected = -1
     this.summaries = []
     this.summariesShown = false
+    this.variance = 0
     this.width = 0
+  }
+
+  computeBoxPlots(summaries: Summary[]) {
+    const dead = []
+    const healthy = []
+    const infected = []
+    const isolated = []
+    for (let i = 0; i < summaries.length; i++) {
+      const summary = summaries[i]
+      dead.push(summary.dead)
+      healthy.push(summary.healthy)
+      infected.push(summary.infected)
+      isolated.push(summary.isolated)
+    }
+    return {
+      dead: computeBoxPlot(dead),
+      healthy: computeBoxPlot(healthy),
+      infected: computeBoxPlot(infected),
+      isolated: computeBoxPlot(isolated),
+    }
+  }
+
+  computeVariance() {
+    const runs = this.summaries.length
+    const values = []
+    let sum = 0
+    for (let i = 0; i < runs; i++) {
+      const val = this.summaries[i].healthy
+      values.push(val)
+      sum += val
+    }
+    const mean = sum / runs
+    sum = 0
+    for (let i = 0; i < runs; i++) {
+      const diff = values[i] - mean
+      sum += diff * diff
+    }
+    return sum / runs
   }
 
   downloadCSV(idx: number) {
@@ -1820,17 +1900,34 @@ class Simulation {
   }
 
   handleMessage(resp: WorkerResponse) {
-    if (this.id !== resp.id) {
+    if (this.rand !== resp.rand) {
       return
     }
     this.markDirty()
     this.results.push(resp.stats)
     if (this.results.length === this.cfg.days) {
+      const summary = getSummary(this.results, this.summaries.length)
+      this.ctrl.updateRange(summary)
       this.runs.push(this.results)
       this.runsUpdate = true
-      this.summaries.push(getSummary(this.results, this.summaries.length))
+      this.summaries.push(summary)
       this.summaries.sort((a, b) => b.healthy - a.healthy)
-      if (this.summaries.length === this.cfg.runs) {
+      const runs = this.summaries.length
+      if (runs === this.cfg.runsMax) {
+        this.runsFinished = true
+      } else if (runs >= this.cfg.runsMin) {
+        const variance = this.computeVariance()
+        if (this.variance !== 0) {
+          const diff = Math.abs(variance - this.variance) / 100
+          if (diff < this.cfg.runsVariance) {
+            this.runsFinished = true
+          }
+        }
+        this.variance = variance
+      } else {
+        this.variance = this.computeVariance()
+      }
+      if (this.runsFinished) {
         if (this.selected === -1) {
           this.selected = this.summaries[
             Math.floor(this.summaries.length / 2)
@@ -1839,12 +1936,12 @@ class Simulation {
         this.worker!.terminate()
         this.worker = undefined
       } else {
+        this.rand++
         this.results = []
         this.worker!.postMessage({
           definition: this.definition,
-          id: this.id,
           method: this.method,
-          rand: this.rand + this.runs.length,
+          rand: this.rand,
         })
       }
     }
@@ -1891,6 +1988,12 @@ class Simulation {
     this.ctrl.requestRedraw()
   }
 
+  randomise() {
+    const rand = Date.now()
+    console.log(`Using random seed: ${rand}`)
+    this.run(this.cfg, this.definition, rand)
+  }
+
   render() {
     if (!IN_BROWSER) {
       return
@@ -1905,7 +2008,15 @@ class Simulation {
     this.renderRuns()
   }
 
-  renderBoxPlots() {}
+  renderBoxPlot(info: BoxPlot, label: string, colour: string) {}
+
+  renderBoxPlots() {
+    const info = this.computeBoxPlots(this.summaries)
+    this.renderBoxPlot(info.healthy, "healthy", COLOUR_HEALTHY)
+    this.renderBoxPlot(info.infected, "infected", COLOUR_INFECTED)
+    this.renderBoxPlot(info.dead, "dead", COLOUR_DEAD)
+    this.renderBoxPlot(info.isolated, "isolated", "#000000")
+  }
 
   renderGraph(results: Stats[]) {
     if (!IN_BROWSER) {
@@ -1989,15 +2100,17 @@ class Simulation {
     this.runsUpdate = false
     const runs = this.runs.length
     let status = ""
-    if (runs < this.cfg.runs) {
-      status = `Running ${runs + 1} of ${this.cfg.runs}`
+    if (!this.runsFinished) {
+      if (!(this.cfg.runsMin === 1 && this.cfg.runsMax === 1)) {
+        status = `Run #${this.runs.length + 1}`
+      }
     }
     this.$status.innerHTML = status
     if (runs === 0) {
       if (!this.summariesShown) {
         hide(this.$summariesLink)
       }
-    } else if (runs === 1) {
+    } else {
       show(this.$summariesLink)
     }
     const $tbody = <tbody></tbody>
@@ -2063,7 +2176,7 @@ class Simulation {
     }
     this.$tbody.replaceWith($tbody)
     this.$tbody = $tbody
-    if (runs >= 5 && runs == this.cfg.runs) {
+    if (runs >= 5) {
       this.renderBoxPlots()
     }
   }
@@ -2101,7 +2214,7 @@ class Simulation {
     this.$summary = $summary
   }
 
-  run(cfg: Config, definition: string, id: number, rand: number) {
+  run(cfg: Config, definition: string, rand: number) {
     if (this.worker) {
       this.worker.terminate()
     }
@@ -2116,16 +2229,17 @@ class Simulation {
     this.cfg = cfg
     this.definition = definition
     this.downloadHidden = true
-    this.id = id
     this.rand = rand
     this.results = []
     this.runs = []
+    this.runsFinished = false
     this.runsUpdate = true
     this.selected = -1
     this.summaries = []
+    this.variance = 0
     this.worker = new AbstractedWorker("./simulation.js")
     this.worker.onMessage((msg: WorkerResponse) => this.handleMessage(msg))
-    this.worker.postMessage({definition, id, method: this.method, rand})
+    this.worker.postMessage({definition, method: this.method, rand})
     this.markDirty()
     hide(this.$download)
   }
@@ -2173,7 +2287,7 @@ class Simulation {
         <span>Run New Simulation</span>
       </div>
     )
-    $run.addEventListener("click", (e: any) => this.ctrl.randomise())
+    $run.addEventListener("click", (e: any) => this.randomise())
     const $settings = (
       <div class="action">
         <img src="settings.svg" alt="Settings" />
@@ -2227,10 +2341,14 @@ class Simulation {
     $visibility.addEventListener("click", this.handleToggle)
     const $content = (
       <div class="content">
-        {$info}
-        {$summary}
-        <div class="graph">{$graph}</div>
-        {$statusHolder}
+        <div class="graph-holder">
+          {$info}
+          {$summary}
+          <div class="graph">{$graph}</div>
+          {$statusHolder}
+        </div>
+        <div class="clear"></div>
+        {$summaries}
       </div>
     )
     const $root = (
@@ -2242,8 +2360,6 @@ class Simulation {
         {$download}
         <div class="clear"></div>
         {$content}
-        <div class="clear"></div>
-        {$summaries}
       </div>
     )
     this.$content = $content
@@ -2283,7 +2399,7 @@ class Simulation {
     this.$root.classList.toggle("clickable")
     const ctrl = this.ctrl
     ctrl.setDimensions()
-    this.run(ctrl.cfg, ctrl.definition, ctrl.id, ctrl.rand)
+    this.run(ctrl.cfg, ctrl.definition, ctrl.rand)
   }
 
   showSummaries() {
@@ -2360,6 +2476,39 @@ function addNode(dst: SVGElement, typ: string, attrs: Record<string, any>) {
   return node
 }
 
+// Derived from https://github.com/datavisyn/chartjs-chart-box-and-violin-plot
+function computeBoxPlot(values: number[]) {
+  values.sort((a, b) => a - b)
+  const q1 = quantile(values, 0.25)
+  const q3 = quantile(values, 0.75)
+  const iqr = q3 - q1
+  let max = values[values.length - 1]
+  max = Math.min(max, q3 + 1.5 * iqr)
+  let min = values[0]
+  min = Math.max(min, q1 - 1.5 * iqr)
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i]
+    if (v >= min) {
+      min = v
+      break
+    }
+  }
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i]
+    if (v <= max) {
+      max = v
+      break
+    }
+  }
+  return {
+    max,
+    median: quantile(values, 0.5),
+    min,
+    q1,
+    q3,
+  }
+}
+
 function decimal(v: number) {
   if (Math.floor(v) === v) {
     return v
@@ -2379,16 +2528,12 @@ function defaultConfig(): Config {
     dailyTestCapacity: 0.005,
     // number of days to run the simulation
     days: 400,
-    // the likelihood of a SafetyScore user being okay with visiting a non-gate-kept cluster
+    // the likelihood of a SafetyScore user being okay with visiting a non-safeguarded cluster
     exposedVisit: 1 / 5,
     // likelihood of dying once infected
     fatalityRisk: 0.01,
     // daily likelihood of someone in the whole population getting infected from outside the population
     foreignImports: 0.06,
-    // the portion of clusters who gate-keep access via SafetyScore
-    gatekeptClusters: 2 / 3,
-    // the SafetyScore level needed to access a gate-kept cluster
-    gatekeptThreshold: 50,
     // distribution of the group size within a cluster for a single period
     groupSize: new PoissonDistribution({mean: 2.5, min: 2, max: 20}),
     // distribution of the number of people in a household [not used yet]
@@ -2401,9 +2546,9 @@ function defaultConfig(): Config {
     immunity: new NormalDistribution({mean: 238, min: 0}),
     // likelihood of someone getting infected during a single contact
     infectionRisk: 0.01,
-    // likelihood of someone installing SafetyScore for visiting a foreign gate-kept cluster
+    // likelihood of someone installing SafetyScore for visiting a foreign safeguarded cluster
     installForeign: 0,
-    // likelihood of someone installing SafetyScore if one of their own clusters becomes gate-kept
+    // likelihood of someone installing SafetyScore if one of their own clusters becomes safeguarded
     installOwn: 0,
     // whether the app is installed for the whole household during initial installations
     installHousehold: false,
@@ -2416,7 +2561,7 @@ function defaultConfig(): Config {
     // likelihood of a notified person self-isolating
     isolationLikelihood: 0.9,
     // likelihood of an isolated person staying at home for any given period during lockdown
-    isolationLockdown: 0.9,
+    isolationLockdown: 0.95,
     // the SafetyScore level below which one is notified to self-isolate and test
     isolationThreshold: 50,
     // likelihood of a symptomatic individual self-isolating
@@ -2437,8 +2582,16 @@ function defaultConfig(): Config {
     preSymptomaticInfectiousDays: 3,
     // portion of clusters which are public
     publicClusters: 0.15,
-    // number of runs to execute
-    runs: 5,
+    // maximum number of runs to execute
+    runsMax: 50,
+    // minimum number of runs to execute
+    runsMin: 5,
+    // threshold of variance change at which to stop runs
+    runsVariance: 0.005,
+    // the SafetyScore level needed to access a safeguarded cluster
+    safeguardThreshold: 50,
+    // the portion of clusters who safeguard access via SafetyScore
+    safeguardedClusters: 2 / 3,
     // the portion of people who have SafetyScore installed at the start
     safetyScoreInstalled: 2 / 3,
     // a multiplicative weighting factor for second-degree tokens
@@ -2752,6 +2905,18 @@ function includes<T>(array: Array<T>, value: T) {
   return false
 }
 
+function killWorkers() {
+  if (!ctrl) {
+    return
+  }
+  for (let i = 0; i < ctrl.simList.length; i++) {
+    const sim = ctrl.simList[i]
+    if (sim.worker) {
+      sim.worker.terminate()
+    }
+  }
+}
+
 function percent(v: number) {
   if (v < 1 || v > 99) {
     v = parseFloat(v.toFixed(2))
@@ -2785,6 +2950,18 @@ function printUsage() {
 
   --config FILE    path to a config file
 `)
+}
+
+// Derived from https://github.com/datavisyn/chartjs-chart-box-and-violin-plot
+function quantile(values: number[], q: number) {
+  const idx = q * (values.length - 1) + 1
+  const lo = Math.floor(idx)
+  const diff = idx - lo
+  const a = values[lo - 1]
+  if (diff === 0) {
+    return a
+  }
+  return diff * (values[lo] - a) + a
 }
 
 function scrollEditor() {
@@ -2861,6 +3038,20 @@ function updateConfig(e?: Event) {
   ctrl.runNew(cfg, definition)
 }
 
+function updateMinMax(m: MinMax, v: number) {
+  if (m.max === -1) {
+    m.max = v
+    m.min = v
+  } else {
+    if (v > m.max) {
+      m.max = v
+    }
+    if (v < m.min) {
+      m.min = v
+    }
+  }
+}
+
 function updateMirror(src: string) {
   const code = Prism.highlight(src, Prism.languages.javascript)
   $mirror.innerHTML = code
@@ -2889,7 +3080,8 @@ function validateConfig(cfg: Config) {
     "isolationDays",
     "lockdownStart",
     "population",
-    "runs",
+    "runsMax",
+    "runsMin",
   ])
   v.validatePercentage([
     "appleGoogleInstalled",
@@ -2897,7 +3089,6 @@ function validateConfig(cfg: Config) {
     "exposedVisit",
     "fatalityRisk",
     "foreignImports",
-    "gatekeptClusters",
     "infectionRisk",
     "installForeign",
     "installOwn",
@@ -2907,6 +3098,8 @@ function validateConfig(cfg: Config) {
     "isolationSymptomatic",
     "keyWorkers",
     "publicClusters",
+    "runsVariance",
+    "safeguardedClusters",
     "safetyScoreInstalled",
     "secondDegreeWeight",
     "selfAttestation",
@@ -2918,7 +3111,7 @@ function validateConfig(cfg: Config) {
     "visitForeignCluster",
     "visitPublicCluster",
   ])
-  v.validateScore(["gatekeptThreshold", "isolationThreshold"])
+  v.validateScore(["isolationThreshold", "safeguardThreshold"])
   v.validateString(["imageFont"])
   v.checkFields()
   return cfg
@@ -2990,6 +3183,7 @@ function main() {
 }
 
 if (IN_BROWSER && !IN_WORKER) {
+  window.addEventListener("beforeunload", killWorkers)
   window.addEventListener("load", main)
   window.addEventListener("resize", handleResize)
 } else {
