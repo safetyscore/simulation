@@ -1576,6 +1576,7 @@ var Simulation = /** @class */ (function () {
         this.renderGraph(results);
         this.renderRuns();
     };
+    Simulation.prototype.renderBoxPlots = function () { };
     Simulation.prototype.renderGraph = function (results) {
         if (!IN_BROWSER) {
             return;
@@ -1648,15 +1649,18 @@ var Simulation = /** @class */ (function () {
         if (!this.runsUpdate) {
             return;
         }
+        this.runsUpdate = false;
+        var runs = this.runs.length;
         var status = "";
-        if (this.runs.length < this.cfg.runs) {
-            status = "Running " + (this.runs.length + 1) + " of " + this.cfg.runs;
+        if (runs < this.cfg.runs) {
+            status = "Running " + (runs + 1) + " of " + this.cfg.runs;
         }
-        function decimal(v) {
-            if (Math.floor(v) === v) {
-                return v;
-            }
-            return v.toFixed(2);
+        this.$status.innerHTML = status;
+        if (runs === 0) {
+            hide(this.$summariesLink);
+        }
+        else if (runs === 1) {
+            show(this.$summariesLink);
         }
         var $tbody = h("tbody", null);
         var _loop_1 = function (i) {
@@ -1717,10 +1721,11 @@ var Simulation = /** @class */ (function () {
         for (var i = 0; i < this.summaries.length; i++) {
             _loop_1(i);
         }
-        this.runsUpdate = false;
-        this.$status.innerHTML = status;
         this.$tbody.replaceWith($tbody);
         this.$tbody = $tbody;
+        if (runs >= 5 && runs == this.cfg.runs) {
+            this.renderBoxPlots();
+        }
     };
     Simulation.prototype.renderSummary = function (results) {
         if (!IN_BROWSER) {
@@ -1824,6 +1829,7 @@ var Simulation = /** @class */ (function () {
         $summariesLink.addEventListener("click", function (e) {
             return _this.toggleSummaries(e);
         });
+        hide($summariesLink);
         var $status = h("div", { class: "status" });
         var $statusHolder = (h("div", { class: "status-holder" },
             $status,
@@ -1965,6 +1971,12 @@ function addNode(dst, typ, attrs) {
     dst.appendChild(node);
     return node;
 }
+function decimal(v) {
+    if (Math.floor(v) === v) {
+        return v;
+    }
+    return v.toFixed(2);
+}
 function defaultConfig() {
     return {
         // the portion of people who have an Apple/Google-style Contact Tracing app installed
@@ -2036,7 +2048,7 @@ function defaultConfig() {
         // portion of clusters which are public
         publicClusters: 0.15,
         // number of runs to execute
-        runs: 20,
+        runs: 5,
         // the portion of people who have SafetyScore installed at the start
         safetyScoreInstalled: 2 / 3,
         // a multiplicative weighting factor for second-degree tokens
