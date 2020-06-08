@@ -31,8 +31,8 @@ var __read = (this && this.__read) || function (o, n) {
 var IN_BROWSER = typeof self === "object";
 var IN_WORKER = typeof importScripts === "function";
 // Attribute values for clusters.
-var CLUSTER_GATEKEPT = 1;
-var CLUSTER_PUBLIC = 2;
+var CLUSTER_PUBLIC = 1;
+var CLUSTER_SAFEGUARDED = 2;
 // Time spent in clusters during a day.
 var CLUSTER_PERIODS = 8;
 // User interface colours.
@@ -199,11 +199,10 @@ var ConfigValidator = /** @class */ (function () {
 }());
 var Controller = /** @class */ (function () {
     function Controller() {
-        this.cfg = defaultConfig();
+        var cfg = defaultConfig();
+        this.cfg = cfg;
         this.definition = defaultConfigDefinition();
-        this.id = 1;
-        this.multi = false;
-        this.rand = 1591164094719;
+        this.rand = 1591652858672 + 4;
         this.paused = false;
         this.simList = [];
         this.sims = {};
@@ -235,7 +234,6 @@ var Controller = /** @class */ (function () {
         this.paused = true;
     };
     Controller.prototype.randomise = function () {
-        this.id++;
         this.rand = Date.now();
         console.log("Using random seed: " + this.rand);
         this.run();
@@ -263,17 +261,23 @@ var Controller = /** @class */ (function () {
         this.requestRedraw();
     };
     Controller.prototype.run = function () {
+        this.range = {
+            dead: { max: -1, min: -1 },
+            healthy: { max: -1, min: -1 },
+            infected: { max: -1, min: -1 },
+            isolated: { max: -1, min: -1 },
+        };
         for (var i = 0; i < this.simList.length; i++) {
             var sim = this.simList[i];
             if (!sim.hidden) {
-                sim.run(this.cfg, this.definition, this.id, this.rand);
+                sim.run(this.cfg, this.definition, this.rand);
             }
         }
     };
     Controller.prototype.runNew = function (cfg, definition) {
         this.cfg = cfg;
         this.definition = definition;
-        this.id++;
+        this.rand = Date.now();
         this.run();
     };
     Controller.prototype.setDimensions = function () {
@@ -283,6 +287,13 @@ var Controller = /** @class */ (function () {
         for (var i = 0; i < this.simList.length; i++) {
             this.simList[i].setDimensions();
         }
+    };
+    Controller.prototype.updateRange = function (summary) {
+        var range = this.range;
+        updateMinMax(range.dead, summary.dead);
+        updateMinMax(range.healthy, summary.healthy);
+        updateMinMax(range.infected, summary.infected);
+        updateMinMax(range.isolated, summary.isolated);
     };
     return Controller;
 }());
@@ -331,7 +342,6 @@ var Model = /** @class */ (function () {
     };
     Model.prototype.handleMessage = function (req) {
         this.cfg = eval("(" + req.definition + ")");
-        this.id = req.id;
         this.method = req.method;
         this.rand = req.rand;
         if (this.handle) {
@@ -464,19 +474,19 @@ var Model = /** @class */ (function () {
                 }
             }
         }
-        // Make certain clusters gatekept and install SafetyScore to all members.
+        // Make certain clusters safeguarded and install SafetyScore to all members.
         if (this.method === METHOD_SAFETYSCORE) {
             var converted = 0;
             var convert = new Set();
-            var limit = Math.round(cfg.gatekeptClusters * cfg.population);
-            var gatekept = clusters.slice(0);
-            shuffle(gatekept, rng.shuffle);
-            for (i = 0; i < gatekept.length; i++) {
+            var limit = Math.round(cfg.safeguardedClusters * cfg.population);
+            var safeguarded = clusters.slice(0);
+            shuffle(safeguarded, rng.shuffle);
+            for (i = 0; i < safeguarded.length; i++) {
                 if (converted >= limit) {
                     break;
                 }
-                var cluster = gatekept[i];
-                cluster.attrs |= CLUSTER_GATEKEPT;
+                var cluster = safeguarded[i];
+                cluster.attrs |= CLUSTER_SAFEGUARDED;
                 for (var j = 0; j < cluster.members.length; j++) {
                     var id = cluster.members[j];
                     var member = people[id];
@@ -1007,10 +1017,10 @@ var Model = /** @class */ (function () {
             }
             if (method === METHOD_SAFETYSCORE) {
                 var cluster = clusters[clusterID];
-                if ((cluster.attrs & CLUSTER_GATEKEPT) === 0) {
-                    // If the person has SafetyScore and the cluster isn't gate-kept, see
-                    // if they'll consider visiting it. We don't consider this an isolated
-                    // period as it's a free choice by the individual.
+                if ((cluster.attrs & CLUSTER_SAFEGUARDED) === 0) {
+                    // If the person has SafetyScore and the cluster isn't safeguarded,
+                    // see if they'll consider visiting it. We don't consider this an
+                    // isolated period as it's a free choice by the individual.
                     if ((person.attrs & PERSON_APP_INSTALLED) !== 0) {
                         if (!(rng.exposedVisit.next() <= cfg.exposedVisit)) {
                             continue;
@@ -1018,7 +1028,7 @@ var Model = /** @class */ (function () {
                     }
                 }
                 else {
-                    // For a gate-kept cluster, if the user doesn't have the app
+                    // For a safeguarded cluster, if the user doesn't have the app
                     // installed, see if they will consider installing it.
                     if ((person.attrs & PERSON_APP_INSTALLED) === 0) {
                         person.attrs |= PERSON_APP_FOREIGN_CLUSTER;
@@ -1026,7 +1036,7 @@ var Model = /** @class */ (function () {
                     }
                     // If they do have the app, check if their score meets the necessary
                     // level.
-                    if (person.score <= cfg.gatekeptThreshold) {
+                    if (person.score <= cfg.safeguardThreshold) {
                         continue;
                     }
                 }
@@ -1102,7 +1112,7 @@ var Model = /** @class */ (function () {
         for (var i = 0; i < this.cfg.days; i++) {
             if (this.period === 0) {
                 var stats = this.nextDay();
-                sendMessage({ id: this.id, stats: stats });
+                sendMessage({ rand: this.rand, stats: stats });
             }
             for (var j = 0; j < CLUSTER_PERIODS; j++) {
                 this.nextPeriod();
@@ -1321,12 +1331,50 @@ var Simulation = /** @class */ (function () {
         this.method = method;
         this.results = [];
         this.runs = [];
+        this.runsFinished = false;
         this.runsUpdate = false;
         this.selected = -1;
         this.summaries = [];
         this.summariesShown = false;
+        this.variance = 0;
         this.width = 0;
     }
+    Simulation.prototype.computeBoxPlots = function (summaries) {
+        var dead = [];
+        var healthy = [];
+        var infected = [];
+        var isolated = [];
+        for (var i = 0; i < summaries.length; i++) {
+            var summary = summaries[i];
+            dead.push(summary.dead);
+            healthy.push(summary.healthy);
+            infected.push(summary.infected);
+            isolated.push(summary.isolated);
+        }
+        return {
+            dead: computeBoxPlot(dead),
+            healthy: computeBoxPlot(healthy),
+            infected: computeBoxPlot(infected),
+            isolated: computeBoxPlot(isolated),
+        };
+    };
+    Simulation.prototype.computeVariance = function () {
+        var runs = this.summaries.length;
+        var values = [];
+        var sum = 0;
+        for (var i = 0; i < runs; i++) {
+            var val = this.summaries[i].healthy;
+            values.push(val);
+            sum += val;
+        }
+        var mean = sum / runs;
+        sum = 0;
+        for (var i = 0; i < runs; i++) {
+            var diff = values[i] - mean;
+            sum += diff * diff;
+        }
+        return sum / runs;
+    };
     Simulation.prototype.downloadCSV = function (idx) {
         var lines = [];
         var results = this.runs[idx];
@@ -1502,17 +1550,36 @@ var Simulation = /** @class */ (function () {
         return this.runs[this.selected];
     };
     Simulation.prototype.handleMessage = function (resp) {
-        if (this.id !== resp.id) {
+        if (this.rand !== resp.rand) {
             return;
         }
         this.markDirty();
         this.results.push(resp.stats);
         if (this.results.length === this.cfg.days) {
+            var summary = getSummary(this.results, this.summaries.length);
+            this.ctrl.updateRange(summary);
             this.runs.push(this.results);
             this.runsUpdate = true;
-            this.summaries.push(getSummary(this.results, this.summaries.length));
+            this.summaries.push(summary);
             this.summaries.sort(function (a, b) { return b.healthy - a.healthy; });
-            if (this.summaries.length === this.cfg.runs) {
+            var runs = this.summaries.length;
+            if (runs === this.cfg.runsMax) {
+                this.runsFinished = true;
+            }
+            else if (runs >= this.cfg.runsMin) {
+                var variance = this.computeVariance();
+                if (this.variance !== 0) {
+                    var diff = Math.abs(variance - this.variance) / 100;
+                    if (diff < this.cfg.runsVariance) {
+                        this.runsFinished = true;
+                    }
+                }
+                this.variance = variance;
+            }
+            else {
+                this.variance = this.computeVariance();
+            }
+            if (this.runsFinished) {
                 if (this.selected === -1) {
                     this.selected = this.summaries[Math.floor(this.summaries.length / 2)].idx;
                 }
@@ -1520,12 +1587,12 @@ var Simulation = /** @class */ (function () {
                 this.worker = undefined;
             }
             else {
+                this.rand++;
                 this.results = [];
                 this.worker.postMessage({
                     definition: this.definition,
-                    id: this.id,
                     method: this.method,
-                    rand: this.rand + this.runs.length,
+                    rand: this.rand,
                 });
             }
         }
@@ -1567,6 +1634,11 @@ var Simulation = /** @class */ (function () {
         this.dirty = true;
         this.ctrl.requestRedraw();
     };
+    Simulation.prototype.randomise = function () {
+        var rand = Date.now();
+        console.log("Using random seed: " + rand);
+        this.run(this.cfg, this.definition, rand);
+    };
     Simulation.prototype.render = function () {
         if (!IN_BROWSER) {
             return;
@@ -1580,7 +1652,14 @@ var Simulation = /** @class */ (function () {
         this.renderGraph(results);
         this.renderRuns();
     };
-    Simulation.prototype.renderBoxPlots = function () { };
+    Simulation.prototype.renderBoxPlot = function (info, label, colour) { };
+    Simulation.prototype.renderBoxPlots = function () {
+        var info = this.computeBoxPlots(this.summaries);
+        this.renderBoxPlot(info.healthy, "healthy", COLOUR_HEALTHY);
+        this.renderBoxPlot(info.infected, "infected", COLOUR_INFECTED);
+        this.renderBoxPlot(info.dead, "dead", COLOUR_DEAD);
+        this.renderBoxPlot(info.isolated, "isolated", "#000000");
+    };
     Simulation.prototype.renderGraph = function (results) {
         if (!IN_BROWSER) {
             return;
@@ -1656,8 +1735,10 @@ var Simulation = /** @class */ (function () {
         this.runsUpdate = false;
         var runs = this.runs.length;
         var status = "";
-        if (runs < this.cfg.runs) {
-            status = "Running " + (runs + 1) + " of " + this.cfg.runs;
+        if (!this.runsFinished) {
+            if (!(this.cfg.runsMin === 1 && this.cfg.runsMax === 1)) {
+                status = "Run #" + (this.runs.length + 1);
+            }
         }
         this.$status.innerHTML = status;
         if (runs === 0) {
@@ -1665,7 +1746,7 @@ var Simulation = /** @class */ (function () {
                 hide(this.$summariesLink);
             }
         }
-        else if (runs === 1) {
+        else {
             show(this.$summariesLink);
         }
         var $tbody = h("tbody", null);
@@ -1729,7 +1810,7 @@ var Simulation = /** @class */ (function () {
         }
         this.$tbody.replaceWith($tbody);
         this.$tbody = $tbody;
-        if (runs >= 5 && runs == this.cfg.runs) {
+        if (runs >= 5) {
             this.renderBoxPlots();
         }
     };
@@ -1760,7 +1841,7 @@ var Simulation = /** @class */ (function () {
         this.$summary.replaceWith($summary);
         this.$summary = $summary;
     };
-    Simulation.prototype.run = function (cfg, definition, id, rand) {
+    Simulation.prototype.run = function (cfg, definition, rand) {
         var _this = this;
         if (this.worker) {
             this.worker.terminate();
@@ -1776,16 +1857,17 @@ var Simulation = /** @class */ (function () {
         this.cfg = cfg;
         this.definition = definition;
         this.downloadHidden = true;
-        this.id = id;
         this.rand = rand;
         this.results = [];
         this.runs = [];
+        this.runsFinished = false;
         this.runsUpdate = true;
         this.selected = -1;
         this.summaries = [];
+        this.variance = 0;
         this.worker = new AbstractedWorker("./simulation.js");
         this.worker.onMessage(function (msg) { return _this.handleMessage(msg); });
-        this.worker.postMessage({ definition: definition, id: id, method: this.method, rand: rand });
+        this.worker.postMessage({ definition: definition, method: this.method, rand: rand });
         this.markDirty();
         hide(this.$download);
     };
@@ -1826,7 +1908,7 @@ var Simulation = /** @class */ (function () {
         var $run = (h("div", { class: "action" },
             h("img", { class: "refresh", src: "refresh.svg", alt: "Refresh" }),
             h("span", null, "Run New Simulation")));
-        $run.addEventListener("click", function (e) { return _this.ctrl.randomise(); });
+        $run.addEventListener("click", function (e) { return _this.randomise(); });
         var $settings = (h("div", { class: "action" },
             h("img", { src: "settings.svg", alt: "Settings" }),
             h("span", null, "Edit Config")));
@@ -1863,10 +1945,13 @@ var Simulation = /** @class */ (function () {
             $visibilitySpan));
         $visibility.addEventListener("click", this.handleToggle);
         var $content = (h("div", { class: "content" },
-            $info,
-            $summary,
-            h("div", { class: "graph" }, $graph),
-            $statusHolder));
+            h("div", { class: "graph-holder" },
+                $info,
+                $summary,
+                h("div", { class: "graph" }, $graph),
+                $statusHolder),
+            h("div", { class: "clear" }),
+            $summaries));
         var $root = (h("div", { class: "simulation" },
             $heading,
             $visibility,
@@ -1874,9 +1959,7 @@ var Simulation = /** @class */ (function () {
             $run,
             $download,
             h("div", { class: "clear" }),
-            $content,
-            h("div", { class: "clear" }),
-            $summaries));
+            $content));
         this.$content = $content;
         this.$download = $download;
         this.$graph = $graph;
@@ -1913,7 +1996,7 @@ var Simulation = /** @class */ (function () {
         this.$root.classList.toggle("clickable");
         var ctrl = this.ctrl;
         ctrl.setDimensions();
-        this.run(ctrl.cfg, ctrl.definition, ctrl.id, ctrl.rand);
+        this.run(ctrl.cfg, ctrl.definition, ctrl.rand);
     };
     Simulation.prototype.showSummaries = function () {
         this.summariesShown = true;
@@ -1979,6 +2062,38 @@ function addNode(dst, typ, attrs) {
     dst.appendChild(node);
     return node;
 }
+// Derived from https://github.com/datavisyn/chartjs-chart-box-and-violin-plot
+function computeBoxPlot(values) {
+    values.sort(function (a, b) { return a - b; });
+    var q1 = quantile(values, 0.25);
+    var q3 = quantile(values, 0.75);
+    var iqr = q3 - q1;
+    var max = values[values.length - 1];
+    max = Math.min(max, q3 + 1.5 * iqr);
+    var min = values[0];
+    min = Math.max(min, q1 - 1.5 * iqr);
+    for (var i = 0; i < values.length; i++) {
+        var v = values[i];
+        if (v >= min) {
+            min = v;
+            break;
+        }
+    }
+    for (var i = values.length - 1; i >= 0; i--) {
+        var v = values[i];
+        if (v <= max) {
+            max = v;
+            break;
+        }
+    }
+    return {
+        max: max,
+        median: quantile(values, 0.5),
+        min: min,
+        q1: q1,
+        q3: q3,
+    };
+}
 function decimal(v) {
     if (Math.floor(v) === v) {
         return v;
@@ -1997,16 +2112,12 @@ function defaultConfig() {
         dailyTestCapacity: 0.005,
         // number of days to run the simulation
         days: 400,
-        // the likelihood of a SafetyScore user being okay with visiting a non-gate-kept cluster
+        // the likelihood of a SafetyScore user being okay with visiting a non-safeguarded cluster
         exposedVisit: 1 / 5,
         // likelihood of dying once infected
         fatalityRisk: 0.01,
         // daily likelihood of someone in the whole population getting infected from outside the population
         foreignImports: 0.06,
-        // the portion of clusters who gate-keep access via SafetyScore
-        gatekeptClusters: 2 / 3,
-        // the SafetyScore level needed to access a gate-kept cluster
-        gatekeptThreshold: 50,
         // distribution of the group size within a cluster for a single period
         groupSize: new PoissonDistribution({ mean: 2.5, min: 2, max: 20 }),
         // distribution of the number of people in a household [not used yet]
@@ -2019,9 +2130,9 @@ function defaultConfig() {
         immunity: new NormalDistribution({ mean: 238, min: 0 }),
         // likelihood of someone getting infected during a single contact
         infectionRisk: 0.01,
-        // likelihood of someone installing SafetyScore for visiting a foreign gate-kept cluster
+        // likelihood of someone installing SafetyScore for visiting a foreign safeguarded cluster
         installForeign: 0,
-        // likelihood of someone installing SafetyScore if one of their own clusters becomes gate-kept
+        // likelihood of someone installing SafetyScore if one of their own clusters becomes safeguarded
         installOwn: 0,
         // whether the app is installed for the whole household during initial installations
         installHousehold: false,
@@ -2034,7 +2145,7 @@ function defaultConfig() {
         // likelihood of a notified person self-isolating
         isolationLikelihood: 0.9,
         // likelihood of an isolated person staying at home for any given period during lockdown
-        isolationLockdown: 0.9,
+        isolationLockdown: 0.95,
         // the SafetyScore level below which one is notified to self-isolate and test
         isolationThreshold: 50,
         // likelihood of a symptomatic individual self-isolating
@@ -2055,8 +2166,16 @@ function defaultConfig() {
         preSymptomaticInfectiousDays: 3,
         // portion of clusters which are public
         publicClusters: 0.15,
-        // number of runs to execute
-        runs: 5,
+        // maximum number of runs to execute
+        runsMax: 50,
+        // minimum number of runs to execute
+        runsMin: 5,
+        // threshold of variance change at which to stop runs
+        runsVariance: 0.005,
+        // the SafetyScore level needed to access a safeguarded cluster
+        safeguardThreshold: 50,
+        // the portion of clusters who safeguard access via SafetyScore
+        safeguardedClusters: 2 / 3,
         // the portion of people who have SafetyScore installed at the start
         safetyScoreInstalled: 2 / 3,
         // a multiplicative weighting factor for second-degree tokens
@@ -2341,6 +2460,17 @@ function includes(array, value) {
     }
     return false;
 }
+function killWorkers() {
+    if (!ctrl) {
+        return;
+    }
+    for (var i = 0; i < ctrl.simList.length; i++) {
+        var sim = ctrl.simList[i];
+        if (sim.worker) {
+            sim.worker.terminate();
+        }
+    }
+}
 function percent(v) {
     if (v < 1 || v > 99) {
         v = parseFloat(v.toFixed(2));
@@ -2381,6 +2511,17 @@ function printDistribution(dist) {
 }
 function printUsage() {
     console.log("Usage: simulation [OPTIONS]\n\n  --config FILE    path to a config file\n");
+}
+// Derived from https://github.com/datavisyn/chartjs-chart-box-and-violin-plot
+function quantile(values, q) {
+    var idx = q * (values.length - 1) + 1;
+    var lo = Math.floor(idx);
+    var diff = idx - lo;
+    var a = values[lo - 1];
+    if (diff === 0) {
+        return a;
+    }
+    return diff * (values[lo] - a) + a;
 }
 function scrollEditor() {
     $mirror.scrollTop = $config.scrollTop;
@@ -2451,6 +2592,20 @@ function updateConfig(e) {
     ctrl.resume();
     ctrl.runNew(cfg, definition);
 }
+function updateMinMax(m, v) {
+    if (m.max === -1) {
+        m.max = v;
+        m.min = v;
+    }
+    else {
+        if (v > m.max) {
+            m.max = v;
+        }
+        if (v < m.min) {
+            m.min = v;
+        }
+    }
+}
 function updateMirror(src) {
     var code = Prism.highlight(src, Prism.languages.javascript);
     $mirror.innerHTML = code;
@@ -2478,7 +2633,8 @@ function validateConfig(cfg) {
         "isolationDays",
         "lockdownStart",
         "population",
-        "runs",
+        "runsMax",
+        "runsMin",
     ]);
     v.validatePercentage([
         "appleGoogleInstalled",
@@ -2486,7 +2642,6 @@ function validateConfig(cfg) {
         "exposedVisit",
         "fatalityRisk",
         "foreignImports",
-        "gatekeptClusters",
         "infectionRisk",
         "installForeign",
         "installOwn",
@@ -2496,6 +2651,8 @@ function validateConfig(cfg) {
         "isolationSymptomatic",
         "keyWorkers",
         "publicClusters",
+        "runsVariance",
+        "safeguardedClusters",
         "safetyScoreInstalled",
         "secondDegreeWeight",
         "selfAttestation",
@@ -2507,7 +2664,7 @@ function validateConfig(cfg) {
         "visitForeignCluster",
         "visitPublicCluster",
     ]);
-    v.validateScore(["gatekeptThreshold", "isolationThreshold"]);
+    v.validateScore(["isolationThreshold", "safeguardThreshold"]);
     v.validateString(["imageFont"]);
     v.checkFields();
     return cfg;
@@ -2590,6 +2747,7 @@ function main() {
     }
 }
 if (IN_BROWSER && !IN_WORKER) {
+    window.addEventListener("beforeunload", killWorkers);
     window.addEventListener("load", main);
     window.addEventListener("resize", handleResize);
 }
