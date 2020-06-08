@@ -218,6 +218,7 @@ interface Summary {
   days: number
   dead: number
   healthy: number
+  idx: number
   infected: number
   isolated: number
   population: number
@@ -1678,7 +1679,7 @@ class Simulation {
     const canvas = document.createElement("canvas")
     const ctx = canvas.getContext("2d")!
     const height = 1500
-    const summary = getSummary(results)
+    const summary = getSummary(results, 0)
     const width = 2400
     const img = new Image(width, height)
     const url = URL.createObjectURL(blob)
@@ -1827,8 +1828,14 @@ class Simulation {
     if (this.results.length === this.cfg.days) {
       this.runs.push(this.results)
       this.runsUpdate = true
-      this.summaries.push(getSummary(this.results))
+      this.summaries.push(getSummary(this.results, this.summaries.length))
+      this.summaries.sort((a, b) => b.healthy - a.healthy)
       if (this.summaries.length === this.cfg.runs) {
+        if (this.selected === -1) {
+          this.selected = this.summaries[
+            Math.floor(this.summaries.length / 2)
+          ].idx
+        }
         this.worker!.terminate()
         this.worker = undefined
       } else {
@@ -1987,17 +1994,19 @@ class Simulation {
     }
     this.$status.innerHTML = status
     if (runs === 0) {
-      hide(this.$summariesLink)
+      if (!this.summariesShown) {
+        hide(this.$summariesLink)
+      }
     } else if (runs === 1) {
       show(this.$summariesLink)
     }
     const $tbody = <tbody></tbody>
     for (let i = 0; i < this.summaries.length; i++) {
-      const idx = i
       const summary = this.summaries[i]
+      const idx = summary.idx
       let view
-      if (i === this.selected) {
-        view = <td>View #{i + 1}</td>
+      if (this.selected === idx) {
+        view = <td>View #{idx + 1}</td>
       } else {
         view = (
           <td>
@@ -2009,7 +2018,7 @@ class Simulation {
                 this.runsUpdate = true
                 this.markDirty()
               }}>
-              View #{i + 1}
+              View #{idx + 1}
             </a>
           </td>
         )
@@ -2066,7 +2075,7 @@ class Simulation {
     if (results.length === 0) {
       return
     }
-    const summary = getSummary(results)
+    const summary = getSummary(results, 0)
     const $summary = (
       <div class="summary">
         <div>
@@ -2192,7 +2201,10 @@ class Simulation {
           <thead>
             <tr>
               <th>Run</th>
-              <th>Healthy</th>
+              <th>
+                Healthy
+                <img class="down" src="down.svg" alt="Down Arrow" />
+              </th>
               <th>Infected</th>
               <th>Dead</th>
               <th>Isolated</th>
@@ -2607,7 +2619,7 @@ function getMethodLabel(method: number) {
   throw `Unknown method: ${method}`
 }
 
-function getSummary(results: Stats[]) {
+function getSummary(results: Stats[], idx: number) {
   const days = results.length
   const last = results[results.length - 1]
   const total = last.healthy + last.dead + last.recovered + last.infected
@@ -2623,6 +2635,7 @@ function getSummary(results: Stats[]) {
     days,
     dead,
     healthy,
+    idx,
     infected,
     isolated,
     population: total,
