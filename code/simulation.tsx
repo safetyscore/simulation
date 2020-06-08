@@ -65,6 +65,12 @@ declare namespace JSX {
     img: ElemProps
     span: ElemProps
     sub: ElemProps
+    table: ElemProps
+    tbody: ElemProps
+    td: ElemProps
+    th: ElemProps
+    thead: ElemProps
+    tr: ElemProps
   }
 }
 
@@ -84,7 +90,6 @@ interface Computed {
   inactivityPenalty: number
   infectiousDays: number
   installForeign: number
-  meanContacts: number
   traceDays: number
 }
 
@@ -207,6 +212,15 @@ interface Stats {
   r: number
   recovered: number
   uhealthy: number
+}
+
+interface Summary {
+  days: number
+  dead: number
+  healthy: number
+  infected: number
+  isolated: number
+  population: number
 }
 
 interface WorkerRequest {
@@ -741,14 +755,7 @@ class Model {
         cfg.preSymptomaticInfectiousDays +
         Math.round(getMean(cfg.illness)) +
         1
-      traceDays = 14
     }
-    const meanContacts =
-      getMean(cfg.clusterCount) * getMean(cfg.clusterSize) +
-      getMean(cfg.groupSize) *
-        CLUSTER_PERIODS *
-        traceDays *
-        cfg.visitForeignCluster
     this.computed = {
       dailyForeign: cfg.foreignImports / cfg.population,
       dailyTests: Math.round(cfg.dailyTestCapacity * cfg.population),
@@ -756,12 +763,13 @@ class Model {
       infectiousDays:
         cfg.preSymptomaticInfectiousDays + Math.round(getMean(cfg.illness)),
       installForeign: cfg.installForeign / cfg.days,
-      meanContacts,
       traceDays,
     }
     // Initialise other properties.
     this.day = 0
     this.isolatedPeriods = 0
+    this.lockdown = false
+    this.lockdownEase = 0
     this.period = 0
     this.recentInfections = []
     this.results = []
@@ -1190,7 +1198,7 @@ class Model {
             continue
           }
         } else if ((person.status & STATUS_ISOLATED) !== 0) {
-          if (rng.isolationLockdown.next() <= cfg.isolationLockdown) {
+          if (rng.isolationLockdown.next() <= cfg.isolationEffectiveness) {
             isolatedPeriods++
             continue
           }
@@ -1575,6 +1583,7 @@ class Simulation {
   ctrl: Controller
   definition: string
   dirty: boolean
+  downloadHidden: boolean
   handle?: ReturnType<typeof setTimeout>
   handleToggle: (e: Event) => void
   heading: string
@@ -1583,8 +1592,13 @@ class Simulation {
   id: number
   method: number
   progress: number
+  rand: number
   results: Stats[]
-  tableShown: boolean
+  runs: Stats[][]
+  runsUpdate: boolean
+  selected: number
+  summaries: Summary[]
+  summariesShown: boolean
   width: number
   worker?: AbstractedWorker
   $boxplot: SVGElement
@@ -1596,26 +1610,34 @@ class Simulation {
   $root: HTMLElement
   $run: HTMLElement
   $settings: HTMLElement
+  $status: HTMLElement
+  $summaries: HTMLElement
+  $summariesLink: HTMLElement
   $summary: HTMLElement
-  $tableLink: HTMLElement
+  $tbody: HTMLElement
   $visibilityImage: HTMLElement
   $visibilitySpan: HTMLElement
 
   constructor(ctrl: Controller, method: number) {
     this.ctrl = ctrl
     this.dirty = true
+    this.downloadHidden = true
     this.heading = getMethodLabel(method)
     this.height = 300
     this.hidden = false
     this.method = method
     this.results = []
-    this.tableShown = false
+    this.runs = []
+    this.runsUpdate = false
+    this.selected = -1
+    this.summaries = []
+    this.summariesShown = false
     this.width = 0
   }
 
-  download() {
+  downloadCSV(idx: number) {
     const lines = []
-    const results = this.results
+    const results = this.runs[idx]
     lines.push(
       "Day,Healthy,Infected,Recovered,Immune,Dead,Isolated,App Installed"
     )
@@ -1632,11 +1654,20 @@ class Simulation {
     triggerDownload(blob, filename)
   }
 
-  downloadGraph(format: string) {
+  downloadGraph(format: string, selected?: number) {
     const filename = this.getFilename(format)
-    const graph = this.$graph.cloneNode(true) as SVGElement
+    const graph = document.createElementNS(SVG, "svg")
     graph.setAttribute("height", "100%")
+    graph.setAttribute("preserveAspectRatio", "none")
+    graph.setAttribute("viewBox", `0 0 ${this.cfg.days} ${this.cfg.population}`)
     graph.setAttribute("width", "100%")
+    let results = this.results
+    if (typeof selected !== "undefined") {
+      results = this.runs[selected]
+    } else if (this.selected !== -1) {
+      results = this.runs[this.selected]
+    }
+    this.generateGraph(graph, results)
     const svg = new XMLSerializer().serializeToString(graph)
     const blob = new Blob([svg], {type: "image/svg+xml"})
     if (format === "svg") {
@@ -1647,7 +1678,7 @@ class Simulation {
     const canvas = document.createElement("canvas")
     const ctx = canvas.getContext("2d")!
     const height = 1500
-    const summary = getSummary(this.results)
+    const summary = getSummary(results)
     const width = 2400
     const img = new Image(width, height)
     const url = URL.createObjectURL(blob)
@@ -1714,22 +1745,101 @@ class Simulation {
     img.src = url
   }
 
+  generateGraph($graph: SVGElement, results: Stats[]) {
+    const height = this.cfg.population
+    const width = this.cfg.days
+    addNode($graph, "rect", {
+      fill: "#eeeeee",
+      height: height,
+      width: width,
+      x: 0,
+      y: 0,
+    })
+    const days = results.length
+    if (days === 0) {
+      return
+    }
+    const healthy = []
+    const infected = []
+    const recovered = []
+    for (let i = 0; i < days; i++) {
+      const stats = results[i]
+      const posX = i
+      let posY = stats.dead
+      recovered.push(`${posX},${posY}`)
+      posY += stats.recovered
+      healthy.push(`${posX},${posY}`)
+      posY += stats.healthy
+      infected.push(`${posX},${posY}`)
+    }
+    const last = results[days - 1]
+    const posX = days
+    let posY = last.dead
+    recovered.push(`${posX},${posY}`)
+    recovered.push(`${days},${height}`)
+    recovered.push(`0,${height}`)
+    posY += last.recovered
+    healthy.push(`${posX},${posY}`)
+    healthy.push(`${days},${height}`)
+    healthy.push(`0,${height}`)
+    posY += last.healthy
+    infected.push(`${posX},${posY}`)
+    infected.push(`${days},${height}`)
+    infected.push(`0,${height}`)
+    addNode($graph, "rect", {
+      fill: COLOUR_DEAD,
+      height: height,
+      width: days,
+      x: 0,
+      y: 0,
+    })
+    addNode($graph, "polyline", {
+      fill: COLOUR_RECOVERED,
+      points: recovered.join(" "),
+    })
+    addNode($graph, "polyline", {
+      fill: COLOUR_HEALTHY,
+      points: healthy.join(" "),
+    })
+    addNode($graph, "polyline", {
+      fill: COLOUR_INFECTED,
+      points: infected.join(" "),
+    })
+  }
+
   getFilename(ext: string) {
     return `simulation-${getMethodID(this.method)}-${Date.now()}.${ext}`
+  }
+
+  getResults() {
+    if (this.selected === -1) {
+      return this.results
+    }
+    return this.runs[this.selected]
   }
 
   handleMessage(resp: WorkerResponse) {
     if (this.id !== resp.id) {
       return
     }
-    this.results.push(resp.stats)
     this.markDirty()
+    this.results.push(resp.stats)
     if (this.results.length === this.cfg.days) {
-      if (this.worker) {
-        this.worker.terminate()
+      this.runs.push(this.results)
+      this.runsUpdate = true
+      this.summaries.push(getSummary(this.results))
+      if (this.summaries.length === this.cfg.runs) {
+        this.worker!.terminate()
         this.worker = undefined
+      } else {
+        this.results = []
+        this.worker!.postMessage({
+          definition: this.definition,
+          id: this.id,
+          method: this.method,
+          rand: this.rand + this.runs.length,
+        })
       }
-      show(this.$download)
     }
   }
 
@@ -1741,6 +1851,7 @@ class Simulation {
       this.worker.terminate()
       this.worker = undefined
     }
+    this.downloadHidden = true
     this.hidden = true
     this.$heading.style.paddingTop = "11px"
     hide(this.$content)
@@ -1762,10 +1873,10 @@ class Simulation {
     hide(this.$info)
   }
 
-  hideTable() {
-    this.tableShown = false
-    this.$tableLink.innerHTML = "Show All"
-    console.log("table hidden")
+  hideSummaries() {
+    this.summariesShown = false
+    this.$summariesLink.innerHTML = "Show All"
+    hide(this.$summaries)
   }
 
   markDirty() {
@@ -1780,79 +1891,24 @@ class Simulation {
     if (this.hidden || overlayShown || !this.dirty) {
       return
     }
+    const results = this.getResults()
     this.dirty = false
-    this.renderSummary()
-    this.renderGraph()
+    this.renderSummary(results)
+    this.renderGraph(results)
+    this.renderRuns()
   }
 
-  renderGraph() {
+  renderGraph(results: Stats[]) {
     if (!IN_BROWSER) {
       return
     }
-    const factor = 1
-    const height = factor * this.cfg.population
-    const results = this.results
-    const width = factor * this.cfg.days
+    if (results.length === this.cfg.days && this.downloadHidden) {
+      this.downloadHidden = false
+      show(this.$download)
+    }
     const $graph = this.$graph
     $graph.innerHTML = ""
-    addNode($graph, "rect", {
-      fill: "#eeeeee",
-      height: height,
-      width: width,
-      x: 0,
-      y: 0,
-    })
-    const days = results.length
-    if (days === 0) {
-      return
-    }
-    const end = factor * days
-    const healthy = []
-    const infected = []
-    const recovered = []
-    for (let i = 0; i < days; i++) {
-      const stats = results[i]
-      const posX = factor * i
-      let posY = stats.dead
-      recovered.push(`${posX},${posY}`)
-      posY += stats.recovered
-      healthy.push(`${posX},${posY}`)
-      posY += stats.healthy
-      infected.push(`${posX},${posY}`)
-    }
-    const last = results[days - 1]
-    const posX = factor * days
-    let posY = last.dead
-    recovered.push(`${posX},${posY}`)
-    recovered.push(`${end},${height}`)
-    recovered.push(`0,${height}`)
-    posY += last.recovered
-    healthy.push(`${posX},${posY}`)
-    healthy.push(`${end},${height}`)
-    healthy.push(`0,${height}`)
-    posY += last.healthy
-    infected.push(`${posX},${posY}`)
-    infected.push(`${end},${height}`)
-    infected.push(`0,${height}`)
-    addNode($graph, "rect", {
-      fill: COLOUR_DEAD,
-      height: height,
-      width: factor * days,
-      x: 0,
-      y: 0,
-    })
-    addNode($graph, "polyline", {
-      fill: COLOUR_RECOVERED,
-      points: recovered.join(" "),
-    })
-    addNode($graph, "polyline", {
-      fill: COLOUR_HEALTHY,
-      points: healthy.join(" "),
-    })
-    addNode($graph, "polyline", {
-      fill: COLOUR_INFECTED,
-      points: infected.join(" "),
-    })
+    this.generateGraph($graph, results)
   }
 
   renderInfo(e: MouseEvent) {
@@ -1864,9 +1920,10 @@ class Simulation {
       }
       return
     }
+    const results = this.getResults()
     const width = this.width / this.cfg.days
     const day = Math.floor(pos / width)
-    if (day >= this.results.length) {
+    if (day >= results.length) {
       if (this.handle) {
         this.hideInfo()
       }
@@ -1875,7 +1932,7 @@ class Simulation {
     if (this.handle) {
       clearTimeout(this.handle)
     }
-    const stats = this.results[day]
+    const stats = results[day]
     let $users = <div></div>
     if (
       this.method === METHOD_APPLE_GOOGLE ||
@@ -1916,14 +1973,95 @@ class Simulation {
     this.handle = setTimeout(() => this.hideInfo(), 1200)
   }
 
-  renderSummary() {
+  renderRuns() {
+    if (!this.runsUpdate) {
+      return
+    }
+    let status = ""
+    if (this.runs.length < this.cfg.runs) {
+      status = `Running ${this.runs.length + 1} of ${this.cfg.runs}`
+    }
+    function decimal(v: number) {
+      if (Math.floor(v) === v) {
+        return v
+      }
+      return v.toFixed(2)
+    }
+    const $tbody = <tbody></tbody>
+    for (let i = 0; i < this.summaries.length; i++) {
+      const idx = i
+      const summary = this.summaries[i]
+      let view
+      if (i === this.selected) {
+        view = <td>View #{i + 1}</td>
+      } else {
+        view = (
+          <td>
+            <a
+              href=""
+              onclick={(e: Event) => {
+                e.preventDefault()
+                this.selected = idx
+                this.runsUpdate = true
+                this.markDirty()
+              }}>
+              View #{i + 1}
+            </a>
+          </td>
+        )
+      }
+      $tbody.appendChild(
+        <tr>
+          {view}
+          <td class="value-healthy">{decimal(summary.healthy)}%</td>
+          <td class="value-infected">{decimal(summary.infected)}%</td>
+          <td class="value-dead">{decimal(summary.dead)}%</td>
+          <td>{decimal(summary.isolated)}%</td>
+          <td class="downloads">
+            <a
+              href=""
+              onclick={(e: Event) => {
+                e.preventDefault()
+                this.downloadCSV(idx)
+              }}>
+              csv
+            </a>{" "}
+            ·{" "}
+            <a
+              href=""
+              onclick={(e: Event) => {
+                e.preventDefault()
+                this.downloadGraph("png", idx)
+              }}>
+              png
+            </a>{" "}
+            ·{" "}
+            <a
+              href=""
+              onclick={(e: Event) => {
+                e.preventDefault()
+                this.downloadGraph("svg", idx)
+              }}>
+              svg
+            </a>
+          </td>
+        </tr>
+      )
+    }
+    this.runsUpdate = false
+    this.$status.innerHTML = status
+    this.$tbody.replaceWith($tbody)
+    this.$tbody = $tbody
+  }
+
+  renderSummary(results: Stats[]) {
     if (!IN_BROWSER) {
       return
     }
-    if (this.results.length === 0) {
+    if (results.length === 0) {
       return
     }
-    const summary = getSummary(this.results)
+    const summary = getSummary(results)
     const $summary = (
       <div class="summary">
         <div>
@@ -1963,8 +2101,14 @@ class Simulation {
     }
     this.cfg = cfg
     this.definition = definition
+    this.downloadHidden = true
     this.id = id
+    this.rand = rand
     this.results = []
+    this.runs = []
+    this.runsUpdate = true
+    this.selected = -1
+    this.summaries = []
     this.worker = new AbstractedWorker("./simulation.js")
     this.worker.onMessage((msg: WorkerResponse) => this.handleMessage(msg))
     this.worker.postMessage({definition, id, method: this.method, rand})
@@ -2016,8 +2160,6 @@ class Simulation {
       </div>
     )
     $run.addEventListener("click", (e: any) => this.ctrl.randomise())
-    const $tableLink = <a href="">See All</a>
-    $tableLink.addEventListener("click", (e: Event) => this.toggleTable(e))
     const $settings = (
       <div class="action">
         <img src="settings.svg" alt="Settings" />
@@ -2025,12 +2167,37 @@ class Simulation {
       </div>
     )
     $settings.addEventListener("click", displayConfig)
-    const $status = (
-      <div class="status">
-        Running 1 of 5<div class="right value">{$tableLink}</div>
+    const $summariesLink = <a href="">See All</a>
+    $summariesLink.addEventListener("click", (e: Event) =>
+      this.toggleSummaries(e)
+    )
+    const $status = <div class="status"></div>
+    const $statusHolder = (
+      <div class="status-holder">
+        {$status}
+        <div class="right value">{$summariesLink}</div>
       </div>
     )
     const $summary = <div class="summary"></div>
+    const $tbody = <tbody></tbody>
+    const $summaries = (
+      <div class="summaries">
+        <table>
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Healthy</th>
+              <th>Infected</th>
+              <th>Dead</th>
+              <th>Isolated</th>
+              <th>Download</th>
+            </tr>
+          </thead>
+          {$tbody}
+        </table>
+      </div>
+    )
+    hide($summaries)
     const $visibilityImage = <img src="hide.svg" alt="Hide" />
     const $visibilitySpan = <span>Hide/Stop Simulation</span>
     const $visibility = (
@@ -2045,7 +2212,7 @@ class Simulation {
         {$info}
         {$summary}
         <div class="graph">{$graph}</div>
-        {$status}
+        {$statusHolder}
       </div>
     )
     const $root = (
@@ -2058,6 +2225,7 @@ class Simulation {
         <div class="clear"></div>
         {$content}
         <div class="clear"></div>
+        {$summaries}
       </div>
     )
     this.$content = $content
@@ -2068,8 +2236,11 @@ class Simulation {
     this.$root = $root
     this.$run = $run
     this.$settings = $settings
+    this.$status = $status
+    this.$summaries = $summaries
     this.$summary = $summary
-    this.$tableLink = $tableLink
+    this.$summariesLink = $summariesLink
+    this.$tbody = $tbody
     this.$visibilityImage = $visibilityImage
     this.$visibilitySpan = $visibilitySpan
     return $root
@@ -2097,9 +2268,10 @@ class Simulation {
     this.run(ctrl.cfg, ctrl.definition, ctrl.id, ctrl.rand)
   }
 
-  showTable() {
-    this.tableShown = true
-    this.$tableLink.innerHTML = "Hide All"
+  showSummaries() {
+    this.summariesShown = true
+    this.$summariesLink.innerHTML = "Hide All"
+    show(this.$summaries)
   }
 
   toggle(e: Event) {
@@ -2113,12 +2285,12 @@ class Simulation {
     }
   }
 
-  toggleTable(e: Event) {
+  toggleSummaries(e: Event) {
     e.preventDefault()
-    if (this.tableShown) {
-      this.hideTable()
+    if (this.summariesShown) {
+      this.hideSummaries()
     } else {
-      this.showTable()
+      this.showSummaries()
     }
   }
 }
@@ -2189,7 +2361,7 @@ function defaultConfig(): Config {
     // daily likelihood of someone in the whole population getting infected from outside the population
     foreignImports: 0.06,
     // the portion of clusters who gate-keep access via SafetyScore
-    gatekeptClusters: 1 / 3,
+    gatekeptClusters: 2 / 3,
     // the SafetyScore level needed to access a gate-kept cluster
     gatekeptThreshold: 50,
     // distribution of the group size within a cluster for a single period
@@ -2241,7 +2413,7 @@ function defaultConfig(): Config {
     // portion of clusters which are public
     publicClusters: 0.15,
     // number of runs to execute
-    runs: 5,
+    runs: 20,
     // the portion of people who have SafetyScore installed at the start
     safetyScoreInstalled: 2 / 3,
     // a multiplicative weighting factor for second-degree tokens
