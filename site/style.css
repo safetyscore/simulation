@@ -86,6 +86,10 @@ pre .operator {
   color: #ccc;
 }
 
+table {
+  width: 100%;
+}
+
 textarea {
   -webkit-text-fill-color: transparent;
   background: transparent;
@@ -153,7 +157,7 @@ textarea::-webkit-scrollbar {
 
 .heading {
   float: left;
-  padding: 14px 10px 3px 230px;
+  padding: 14px 10px 3px 240px;
 }
 
 .info {
@@ -184,10 +188,40 @@ textarea::-webkit-scrollbar {
 }
 
 .status {
+  float: left;
+}
+
+.status-holder {
   padding: 0 20px 0 20px;
   position: absolute;
   top: 263px;
   width: 200px;
+}
+
+.summaries {
+  padding: 20px;
+  text-align: center;
+}
+
+.summaries table {
+  border: 1px solid #eeeeee;
+  border-radius: 5px;
+  border-spacing: 0px;
+  padding-bottom: 5px;
+}
+
+.summaries thead {
+  background: #f9fafb;
+}
+
+.summaries td,
+.summaries th {
+  padding: 10px;
+}
+
+.summaries .downloads a {
+  font-variant: small-caps;
+  margin: 0 5px;
 }
 
 .summary {
@@ -204,22 +238,27 @@ textarea::-webkit-scrollbar {
 
 .value-dead {
   color: #444444;
+  font-weight: bold;
 }
 
 .value-healthy {
   color: #8bb4b8;
+  font-weight: bold;
 }
 
 .value-immune {
   color: #009d51;
+  font-weight: bold;
 }
 
 .value-infected {
   color: #ff3945;
+  font-weight: bold;
 }
 
 .value-recovered {
   color: #009d51;
+  font-weight: bold;
 }
 
 #editor {
