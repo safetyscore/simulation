@@ -143,6 +143,12 @@ textarea::-webkit-scrollbar {
   position: relative;
 }
 
+.down {
+  margin-left: 2px;
+  margin-top: -4px;
+  vertical-align: middle;
+}
+
 .graph {
   height: 300px;
   float: left;
