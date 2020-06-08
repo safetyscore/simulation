@@ -1898,6 +1898,8 @@ class Simulation {
     this.renderRuns()
   }
 
+  renderBoxPlots() {}
+
   renderGraph(results: Stats[]) {
     if (!IN_BROWSER) {
       return
@@ -1977,15 +1979,17 @@ class Simulation {
     if (!this.runsUpdate) {
       return
     }
+    this.runsUpdate = false
+    const runs = this.runs.length
     let status = ""
-    if (this.runs.length < this.cfg.runs) {
-      status = `Running ${this.runs.length + 1} of ${this.cfg.runs}`
+    if (runs < this.cfg.runs) {
+      status = `Running ${runs + 1} of ${this.cfg.runs}`
     }
-    function decimal(v: number) {
-      if (Math.floor(v) === v) {
-        return v
-      }
-      return v.toFixed(2)
+    this.$status.innerHTML = status
+    if (runs === 0) {
+      hide(this.$summariesLink)
+    } else if (runs === 1) {
+      show(this.$summariesLink)
     }
     const $tbody = <tbody></tbody>
     for (let i = 0; i < this.summaries.length; i++) {
@@ -2048,10 +2052,11 @@ class Simulation {
         </tr>
       )
     }
-    this.runsUpdate = false
-    this.$status.innerHTML = status
     this.$tbody.replaceWith($tbody)
     this.$tbody = $tbody
+    if (runs >= 5 && runs == this.cfg.runs) {
+      this.renderBoxPlots()
+    }
   }
 
   renderSummary(results: Stats[]) {
@@ -2171,6 +2176,7 @@ class Simulation {
     $summariesLink.addEventListener("click", (e: Event) =>
       this.toggleSummaries(e)
     )
+    hide($summariesLink)
     const $status = <div class="status"></div>
     const $statusHolder = (
       <div class="status-holder">
@@ -2342,6 +2348,13 @@ function addNode(dst: SVGElement, typ: string, attrs: Record<string, any>) {
   return node
 }
 
+function decimal(v: number) {
+  if (Math.floor(v) === v) {
+    return v
+  }
+  return v.toFixed(2)
+}
+
 function defaultConfig(): Config {
   return {
     // the portion of people who have an Apple/Google-style Contact Tracing app installed
@@ -2413,7 +2426,7 @@ function defaultConfig(): Config {
     // portion of clusters which are public
     publicClusters: 0.15,
     // number of runs to execute
-    runs: 20,
+    runs: 5,
     // the portion of people who have SafetyScore installed at the start
     safetyScoreInstalled: 2 / 3,
     // a multiplicative weighting factor for second-degree tokens
