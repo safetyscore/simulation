@@ -537,25 +537,20 @@ var Model = /** @class */ (function () {
                     cfg.preSymptomaticInfectiousDays +
                     Math.round(getMean(cfg.illness)) +
                     1;
-            traceDays = 14;
         }
-        var meanContacts = getMean(cfg.clusterCount) * getMean(cfg.clusterSize) +
-            getMean(cfg.groupSize) *
-                CLUSTER_PERIODS *
-                traceDays *
-                cfg.visitForeignCluster;
         this.computed = {
             dailyForeign: cfg.foreignImports / cfg.population,
             dailyTests: Math.round(cfg.dailyTestCapacity * cfg.population),
             inactivityPenalty: 100 / traceDays,
             infectiousDays: cfg.preSymptomaticInfectiousDays + Math.round(getMean(cfg.illness)),
             installForeign: cfg.installForeign / cfg.days,
-            meanContacts: meanContacts,
             traceDays: traceDays,
         };
         // Initialise other properties.
         this.day = 0;
         this.isolatedPeriods = 0;
+        this.lockdown = false;
+        this.lockdownEase = 0;
         this.period = 0;
         this.recentInfections = [];
         this.results = [];
@@ -981,7 +976,7 @@ var Model = /** @class */ (function () {
                     }
                 }
                 else if ((person.status & STATUS_ISOLATED) !== 0) {
-                    if (rng.isolationLockdown.next() <= cfg.isolationLockdown) {
+                    if (rng.isolationLockdown.next() <= cfg.isolationEffectiveness) {
                         isolatedPeriods++;
                         continue;
                     }
@@ -1319,17 +1314,22 @@ var Simulation = /** @class */ (function () {
     function Simulation(ctrl, method) {
         this.ctrl = ctrl;
         this.dirty = true;
+        this.downloadHidden = true;
         this.heading = getMethodLabel(method);
         this.height = 300;
         this.hidden = false;
         this.method = method;
         this.results = [];
-        this.tableShown = false;
+        this.runs = [];
+        this.runsUpdate = false;
+        this.selected = -1;
+        this.summaries = [];
+        this.summariesShown = false;
         this.width = 0;
     }
-    Simulation.prototype.download = function () {
+    Simulation.prototype.downloadCSV = function (idx) {
         var lines = [];
-        var results = this.results;
+        var results = this.runs[idx];
         lines.push("Day,Healthy,Infected,Recovered,Immune,Dead,Isolated,App Installed");
         for (var i = 0; i < results.length; i++) {
             var stats = results[i];
@@ -1339,12 +1339,22 @@ var Simulation = /** @class */ (function () {
         var filename = this.getFilename("csv");
         triggerDownload(blob, filename);
     };
-    Simulation.prototype.downloadGraph = function (format) {
+    Simulation.prototype.downloadGraph = function (format, selected) {
         var _this = this;
         var filename = this.getFilename(format);
-        var graph = this.$graph.cloneNode(true);
+        var graph = document.createElementNS(SVG, "svg");
         graph.setAttribute("height", "100%");
+        graph.setAttribute("preserveAspectRatio", "none");
+        graph.setAttribute("viewBox", "0 0 " + this.cfg.days + " " + this.cfg.population);
         graph.setAttribute("width", "100%");
+        var results = this.results;
+        if (typeof selected !== "undefined") {
+            results = this.runs[selected];
+        }
+        else if (this.selected !== -1) {
+            results = this.runs[this.selected];
+        }
+        this.generateGraph(graph, results);
         var svg = new XMLSerializer().serializeToString(graph);
         var blob = new Blob([svg], { type: "image/svg+xml" });
         if (format === "svg") {
@@ -1355,7 +1365,7 @@ var Simulation = /** @class */ (function () {
         var canvas = document.createElement("canvas");
         var ctx = canvas.getContext("2d");
         var height = 1500;
-        var summary = getSummary(this.results);
+        var summary = getSummary(results);
         var width = 2400;
         var img = new Image(width, height);
         var url = URL.createObjectURL(blob);
@@ -1421,21 +1431,99 @@ var Simulation = /** @class */ (function () {
         };
         img.src = url;
     };
+    Simulation.prototype.generateGraph = function ($graph, results) {
+        var height = this.cfg.population;
+        var width = this.cfg.days;
+        addNode($graph, "rect", {
+            fill: "#eeeeee",
+            height: height,
+            width: width,
+            x: 0,
+            y: 0,
+        });
+        var days = results.length;
+        if (days === 0) {
+            return;
+        }
+        var healthy = [];
+        var infected = [];
+        var recovered = [];
+        for (var i = 0; i < days; i++) {
+            var stats = results[i];
+            var posX_1 = i;
+            var posY_1 = stats.dead;
+            recovered.push(posX_1 + "," + posY_1);
+            posY_1 += stats.recovered;
+            healthy.push(posX_1 + "," + posY_1);
+            posY_1 += stats.healthy;
+            infected.push(posX_1 + "," + posY_1);
+        }
+        var last = results[days - 1];
+        var posX = days;
+        var posY = last.dead;
+        recovered.push(posX + "," + posY);
+        recovered.push(days + "," + height);
+        recovered.push("0," + height);
+        posY += last.recovered;
+        healthy.push(posX + "," + posY);
+        healthy.push(days + "," + height);
+        healthy.push("0," + height);
+        posY += last.healthy;
+        infected.push(posX + "," + posY);
+        infected.push(days + "," + height);
+        infected.push("0," + height);
+        addNode($graph, "rect", {
+            fill: COLOUR_DEAD,
+            height: height,
+            width: days,
+            x: 0,
+            y: 0,
+        });
+        addNode($graph, "polyline", {
+            fill: COLOUR_RECOVERED,
+            points: recovered.join(" "),
+        });
+        addNode($graph, "polyline", {
+            fill: COLOUR_HEALTHY,
+            points: healthy.join(" "),
+        });
+        addNode($graph, "polyline", {
+            fill: COLOUR_INFECTED,
+            points: infected.join(" "),
+        });
+    };
     Simulation.prototype.getFilename = function (ext) {
         return "simulation-" + getMethodID(this.method) + "-" + Date.now() + "." + ext;
+    };
+    Simulation.prototype.getResults = function () {
+        if (this.selected === -1) {
+            return this.results;
+        }
+        return this.runs[this.selected];
     };
     Simulation.prototype.handleMessage = function (resp) {
         if (this.id !== resp.id) {
             return;
         }
-        this.results.push(resp.stats);
         this.markDirty();
+        this.results.push(resp.stats);
         if (this.results.length === this.cfg.days) {
-            if (this.worker) {
+            this.runs.push(this.results);
+            this.runsUpdate = true;
+            this.summaries.push(getSummary(this.results));
+            if (this.summaries.length === this.cfg.runs) {
                 this.worker.terminate();
                 this.worker = undefined;
             }
-            show(this.$download);
+            else {
+                this.results = [];
+                this.worker.postMessage({
+                    definition: this.definition,
+                    id: this.id,
+                    method: this.method,
+                    rand: this.rand + this.runs.length,
+                });
+            }
         }
     };
     Simulation.prototype.hide = function () {
@@ -1446,6 +1534,7 @@ var Simulation = /** @class */ (function () {
             this.worker.terminate();
             this.worker = undefined;
         }
+        this.downloadHidden = true;
         this.hidden = true;
         this.$heading.style.paddingTop = "11px";
         hide(this.$content);
@@ -1465,10 +1554,10 @@ var Simulation = /** @class */ (function () {
     Simulation.prototype.hideInfo = function () {
         hide(this.$info);
     };
-    Simulation.prototype.hideTable = function () {
-        this.tableShown = false;
-        this.$tableLink.innerHTML = "Show All";
-        console.log("table hidden");
+    Simulation.prototype.hideSummaries = function () {
+        this.summariesShown = false;
+        this.$summariesLink.innerHTML = "Show All";
+        hide(this.$summaries);
     };
     Simulation.prototype.markDirty = function () {
         this.dirty = true;
@@ -1481,78 +1570,23 @@ var Simulation = /** @class */ (function () {
         if (this.hidden || overlayShown || !this.dirty) {
             return;
         }
+        var results = this.getResults();
         this.dirty = false;
-        this.renderSummary();
-        this.renderGraph();
+        this.renderSummary(results);
+        this.renderGraph(results);
+        this.renderRuns();
     };
-    Simulation.prototype.renderGraph = function () {
+    Simulation.prototype.renderGraph = function (results) {
         if (!IN_BROWSER) {
             return;
         }
-        var factor = 1;
-        var height = factor * this.cfg.population;
-        var results = this.results;
-        var width = factor * this.cfg.days;
+        if (results.length === this.cfg.days && this.downloadHidden) {
+            this.downloadHidden = false;
+            show(this.$download);
+        }
         var $graph = this.$graph;
         $graph.innerHTML = "";
-        addNode($graph, "rect", {
-            fill: "#eeeeee",
-            height: height,
-            width: width,
-            x: 0,
-            y: 0,
-        });
-        var days = results.length;
-        if (days === 0) {
-            return;
-        }
-        var end = factor * days;
-        var healthy = [];
-        var infected = [];
-        var recovered = [];
-        for (var i = 0; i < days; i++) {
-            var stats = results[i];
-            var posX_1 = factor * i;
-            var posY_1 = stats.dead;
-            recovered.push(posX_1 + "," + posY_1);
-            posY_1 += stats.recovered;
-            healthy.push(posX_1 + "," + posY_1);
-            posY_1 += stats.healthy;
-            infected.push(posX_1 + "," + posY_1);
-        }
-        var last = results[days - 1];
-        var posX = factor * days;
-        var posY = last.dead;
-        recovered.push(posX + "," + posY);
-        recovered.push(end + "," + height);
-        recovered.push("0," + height);
-        posY += last.recovered;
-        healthy.push(posX + "," + posY);
-        healthy.push(end + "," + height);
-        healthy.push("0," + height);
-        posY += last.healthy;
-        infected.push(posX + "," + posY);
-        infected.push(end + "," + height);
-        infected.push("0," + height);
-        addNode($graph, "rect", {
-            fill: COLOUR_DEAD,
-            height: height,
-            width: factor * days,
-            x: 0,
-            y: 0,
-        });
-        addNode($graph, "polyline", {
-            fill: COLOUR_RECOVERED,
-            points: recovered.join(" "),
-        });
-        addNode($graph, "polyline", {
-            fill: COLOUR_HEALTHY,
-            points: healthy.join(" "),
-        });
-        addNode($graph, "polyline", {
-            fill: COLOUR_INFECTED,
-            points: infected.join(" "),
-        });
+        this.generateGraph($graph, results);
     };
     Simulation.prototype.renderInfo = function (e) {
         var _this = this;
@@ -1564,9 +1598,10 @@ var Simulation = /** @class */ (function () {
             }
             return;
         }
+        var results = this.getResults();
         var width = this.width / this.cfg.days;
         var day = Math.floor(pos / width);
-        if (day >= this.results.length) {
+        if (day >= results.length) {
             if (this.handle) {
                 this.hideInfo();
             }
@@ -1575,7 +1610,7 @@ var Simulation = /** @class */ (function () {
         if (this.handle) {
             clearTimeout(this.handle);
         }
-        var stats = this.results[day];
+        var stats = results[day];
         var $users = h("div", null);
         if (this.method === METHOD_APPLE_GOOGLE ||
             this.method === METHOD_SAFETYSCORE) {
@@ -1608,14 +1643,93 @@ var Simulation = /** @class */ (function () {
         show(this.$info);
         this.handle = setTimeout(function () { return _this.hideInfo(); }, 1200);
     };
-    Simulation.prototype.renderSummary = function () {
+    Simulation.prototype.renderRuns = function () {
+        var _this = this;
+        if (!this.runsUpdate) {
+            return;
+        }
+        var status = "";
+        if (this.runs.length < this.cfg.runs) {
+            status = "Running " + (this.runs.length + 1) + " of " + this.cfg.runs;
+        }
+        function decimal(v) {
+            if (Math.floor(v) === v) {
+                return v;
+            }
+            return v.toFixed(2);
+        }
+        var $tbody = h("tbody", null);
+        var _loop_1 = function (i) {
+            var idx = i;
+            var summary = this_1.summaries[i];
+            var view = void 0;
+            if (i === this_1.selected) {
+                view = h("td", null,
+                    "View #",
+                    i + 1);
+            }
+            else {
+                view = (h("td", null,
+                    h("a", { href: "", onclick: function (e) {
+                            e.preventDefault();
+                            _this.selected = idx;
+                            _this.runsUpdate = true;
+                            _this.markDirty();
+                        } },
+                        "View #",
+                        i + 1)));
+            }
+            $tbody.appendChild(h("tr", null,
+                view,
+                h("td", { class: "value-healthy" },
+                    decimal(summary.healthy),
+                    "%"),
+                h("td", { class: "value-infected" },
+                    decimal(summary.infected),
+                    "%"),
+                h("td", { class: "value-dead" },
+                    decimal(summary.dead),
+                    "%"),
+                h("td", null,
+                    decimal(summary.isolated),
+                    "%"),
+                h("td", { class: "downloads" },
+                    h("a", { href: "", onclick: function (e) {
+                            e.preventDefault();
+                            _this.downloadCSV(idx);
+                        } }, "csv"),
+                    " ",
+                    "\u00B7",
+                    " ",
+                    h("a", { href: "", onclick: function (e) {
+                            e.preventDefault();
+                            _this.downloadGraph("png", idx);
+                        } }, "png"),
+                    " ",
+                    "\u00B7",
+                    " ",
+                    h("a", { href: "", onclick: function (e) {
+                            e.preventDefault();
+                            _this.downloadGraph("svg", idx);
+                        } }, "svg"))));
+        };
+        var this_1 = this;
+        for (var i = 0; i < this.summaries.length; i++) {
+            _loop_1(i);
+        }
+        this.runsUpdate = false;
+        this.$status.innerHTML = status;
+        this.$tbody.replaceWith($tbody);
+        this.$tbody = $tbody;
+    };
+    Simulation.prototype.renderSummary = function (results) {
         if (!IN_BROWSER) {
             return;
         }
-        if (this.results.length === 0) {
+        if (results.length === 0) {
             return;
         }
-        var summary = getSummary(this.results);
+        var summary = getSummary(results);
         var $summary = (h("div", { class: "summary" },
             h("div", null,
                 "Days",
@@ -1650,8 +1764,14 @@ var Simulation = /** @class */ (function () {
         }
         this.cfg = cfg;
         this.definition = definition;
+        this.downloadHidden = true;
         this.id = id;
+        this.rand = rand;
         this.results = [];
+        this.runs = [];
+        this.runsUpdate = true;
+        this.selected = -1;
+        this.summaries = [];
         this.worker = new AbstractedWorker("./simulation.js");
         this.worker.onMessage(function (msg) { return _this.handleMessage(msg); });
         this.worker.postMessage({ definition: definition, id: id, method: this.method, rand: rand });
@@ -1696,16 +1816,32 @@ var Simulation = /** @class */ (function () {
             h("img", { class: "refresh", src: "refresh.svg", alt: "Refresh" }),
             h("span", null, "Run New Simulation")));
         $run.addEventListener("click", function (e) { return _this.ctrl.randomise(); });
-        var $tableLink = h("a", { href: "" }, "See All");
-        $tableLink.addEventListener("click", function (e) { return _this.toggleTable(e); });
         var $settings = (h("div", { class: "action" },
             h("img", { src: "settings.svg", alt: "Settings" }),
             h("span", null, "Edit Config")));
         $settings.addEventListener("click", displayConfig);
-        var $status = (h("div", { class: "status" },
-            "Running 1 of 5",
-            h("div", { class: "right value" }, $tableLink)));
+        var $summariesLink = h("a", { href: "" }, "See All");
+        $summariesLink.addEventListener("click", function (e) {
+            return _this.toggleSummaries(e);
+        });
+        var $status = h("div", { class: "status" });
+        var $statusHolder = (h("div", { class: "status-holder" },
+            $status,
+            h("div", { class: "right value" }, $summariesLink)));
         var $summary = h("div", { class: "summary" });
+        var $tbody = h("tbody", null);
+        var $summaries = (h("div", { class: "summaries" },
+            h("table", null,
+                h("thead", null,
+                    h("tr", null,
+                        h("th", null, "Run"),
+                        h("th", null, "Healthy"),
+                        h("th", null, "Infected"),
+                        h("th", null, "Dead"),
+                        h("th", null, "Isolated"),
+                        h("th", null, "Download"))),
+                $tbody)));
+        hide($summaries);
         var $visibilityImage = h("img", { src: "hide.svg", alt: "Hide" });
         var $visibilitySpan = h("span", null, "Hide/Stop Simulation");
         var $visibility = (h("div", { class: "action" },
@@ -1716,7 +1852,7 @@ var Simulation = /** @class */ (function () {
             $info,
             $summary,
             h("div", { class: "graph" }, $graph),
-            $status));
+            $statusHolder));
         var $root = (h("div", { class: "simulation" },
             $heading,
             $visibility,
@@ -1725,7 +1861,8 @@ var Simulation = /** @class */ (function () {
             $download,
             h("div", { class: "clear" }),
             $content,
-            h("div", { class: "clear" })));
+            h("div", { class: "clear" }),
+            $summaries));
         this.$content = $content;
         this.$download = $download;
         this.$graph = $graph;
@@ -1734,8 +1871,11 @@ var Simulation = /** @class */ (function () {
         this.$root = $root;
         this.$run = $run;
         this.$settings = $settings;
+        this.$status = $status;
+        this.$summaries = $summaries;
         this.$summary = $summary;
-        this.$tableLink = $tableLink;
+        this.$summariesLink = $summariesLink;
+        this.$tbody = $tbody;
         this.$visibilityImage = $visibilityImage;
         this.$visibilitySpan = $visibilitySpan;
         return $root;
@@ -1761,9 +1901,10 @@ var Simulation = /** @class */ (function () {
         ctrl.setDimensions();
         this.run(ctrl.cfg, ctrl.definition, ctrl.id, ctrl.rand);
     };
-    Simulation.prototype.showTable = function () {
-        this.tableShown = true;
-        this.$tableLink.innerHTML = "Hide All";
+    Simulation.prototype.showSummaries = function () {
+        this.summariesShown = true;
+        this.$summariesLink.innerHTML = "Hide All";
+        show(this.$summaries);
     };
     Simulation.prototype.toggle = function (e) {
         if (e) {
@@ -1776,13 +1917,13 @@ var Simulation = /** @class */ (function () {
             this.hide();
         }
     };
-    Simulation.prototype.toggleTable = function (e) {
+    Simulation.prototype.toggleSummaries = function (e) {
         e.preventDefault();
-        if (this.tableShown) {
-            this.hideTable();
+        if (this.summariesShown) {
+            this.hideSummaries();
         }
         else {
-            this.showTable();
+            this.showSummaries();
         }
     };
     return Simulation;
@@ -1843,7 +1984,7 @@ function defaultConfig() {
         // daily likelihood of someone in the whole population getting infected from outside the population
         foreignImports: 0.06,
         // the portion of clusters who gate-keep access via SafetyScore
-        gatekeptClusters: 1 / 3,
+        gatekeptClusters: 2 / 3,
         // the SafetyScore level needed to access a gate-kept cluster
         gatekeptThreshold: 50,
         // distribution of the group size within a cluster for a single period
@@ -1895,7 +2036,7 @@ function defaultConfig() {
         // portion of clusters which are public
         publicClusters: 0.15,
         // number of runs to execute
-        runs: 5,
+        runs: 20,
         // the portion of people who have SafetyScore installed at the start
         safetyScoreInstalled: 2 / 3,
         // a multiplicative weighting factor for second-degree tokens
