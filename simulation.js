@@ -1365,7 +1365,7 @@ var Simulation = /** @class */ (function () {
         var canvas = document.createElement("canvas");
         var ctx = canvas.getContext("2d");
         var height = 1500;
-        var summary = getSummary(results);
+        var summary = getSummary(results, 0);
         var width = 2400;
         var img = new Image(width, height);
         var url = URL.createObjectURL(blob);
@@ -1510,8 +1510,12 @@ var Simulation = /** @class */ (function () {
         if (this.results.length === this.cfg.days) {
             this.runs.push(this.results);
             this.runsUpdate = true;
-            this.summaries.push(getSummary(this.results));
+            this.summaries.push(getSummary(this.results, this.summaries.length));
+            this.summaries.sort(function (a, b) { return b.healthy - a.healthy; });
             if (this.summaries.length === this.cfg.runs) {
+                if (this.selected === -1) {
+                    this.selected = this.summaries[Math.floor(this.summaries.length / 2)].idx;
+                }
                 this.worker.terminate();
                 this.worker = undefined;
             }
@@ -1657,20 +1661,22 @@ var Simulation = /** @class */ (function () {
         }
         this.$status.innerHTML = status;
         if (runs === 0) {
-            hide(this.$summariesLink);
+            if (!this.summariesShown) {
+                hide(this.$summariesLink);
+            }
         }
         else if (runs === 1) {
             show(this.$summariesLink);
         }
         var $tbody = h("tbody", null);
         var _loop_1 = function (i) {
-            var idx = i;
             var summary = this_1.summaries[i];
+            var idx = summary.idx;
             var view = void 0;
-            if (i === this_1.selected) {
+            if (this_1.selected === idx) {
                 view = h("td", null,
                     "View #",
-                    i + 1);
+                    idx + 1);
             }
             else {
                 view = (h("td", null,
@@ -1681,7 +1687,7 @@ var Simulation = /** @class */ (function () {
                             _this.markDirty();
                         } },
                         "View #",
-                        i + 1)));
+                        idx + 1)));
             }
             $tbody.appendChild(h("tr", null,
                 view,
@@ -1734,7 +1740,7 @@ var Simulation = /** @class */ (function () {
         if (results.length === 0) {
             return;
         }
-        var summary = getSummary(results);
+        var summary = getSummary(results, 0);
         var $summary = (h("div", { class: "summary" },
             h("div", null,
                 "Days",
@@ -1841,7 +1847,9 @@ var Simulation = /** @class */ (function () {
                 h("thead", null,
                     h("tr", null,
                         h("th", null, "Run"),
-                        h("th", null, "Healthy"),
+                        h("th", null,
+                            "Healthy",
+                            h("img", { class: "down", src: "down.svg", alt: "Down Arrow" })),
                         h("th", null, "Infected"),
                         h("th", null, "Dead"),
                         h("th", null, "Isolated"),
@@ -2207,7 +2215,7 @@ function getMethodLabel(method) {
     }
     throw "Unknown method: " + method;
 }
-function getSummary(results) {
+function getSummary(results, idx) {
     var days = results.length;
     var last = results[results.length - 1];
     var total = last.healthy + last.dead + last.recovered + last.infected;
@@ -2223,6 +2231,7 @@ function getSummary(results) {
         days: days,
         dead: dead,
         healthy: healthy,
+        idx: idx,
         infected: infected,
         isolated: isolated,
         population: total,
