@@ -13,14 +13,7 @@ html {
 }
 
 a {
-  border-bottom: 1px dashed #444444;
-  color: #444444;
-  padding-bottom: 3px;
   text-decoration: none;
-}
-
-a:hover {
-  border-bottom: 1px dashed transparent;
 }
 
 button {
@@ -183,7 +176,7 @@ textarea::-webkit-scrollbar {
 .simulation {
   background: #fff;
   margin-bottom: 20px;
-  min-width: 500px;
+  min-width: 800px;
   user-select: none;
 }
 
@@ -196,6 +189,19 @@ textarea::-webkit-scrollbar {
   position: absolute;
   top: 263px;
   width: 200px;
+}
+
+.status-holder a,
+.summaries a {
+  border-bottom: 1px dashed #444444;
+  color: #444444;
+  padding-bottom: 3px;
+  text-decoration: none;
+}
+
+.status-holder a:hover,
+.summaries a:hover {
+  border-bottom: 1px dashed transparent;
 }
 
 .summaries {
@@ -283,7 +289,6 @@ textarea::-webkit-scrollbar {
   color: #fff;
   font-size: 30px;
   line-height: 30px;
-  text-decoration: none;
 }
 
 #header img {
