@@ -79,6 +79,10 @@ pre .operator {
   color: #ccc;
 }
 
+strong {
+  font-weight: 600;
+}
+
 table {
   width: 100%;
 }
@@ -162,11 +166,15 @@ textarea::-webkit-scrollbar {
 .info {
   background: #f0f0f0;
   display: none;
-  padding: 14px 20px 18px 12px;
+  padding: 14px 20px 15px 18px;
   position: absolute;
   top: 0;
-  width: 200px;
+  width: 190px;
   z-index: 5;
+}
+
+.pad-bottom {
+  padding-bottom: 8px;
 }
 
 .refresh {
@@ -239,7 +247,7 @@ textarea::-webkit-scrollbar {
 .summary {
   float: left;
   height: 300px;
-  padding: 0 20px 0 20px;
+  padding: 0 20px 0 18px;
   position: relative;
   width: 200px;
 }
@@ -265,6 +273,10 @@ textarea::-webkit-scrollbar {
 
 .value-infected {
   color: #ff3945;
+  font-weight: bold;
+}
+
+.value-isolated {
   font-weight: bold;
 }
 
