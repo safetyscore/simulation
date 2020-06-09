@@ -27,6 +27,7 @@ var __read = (this && this.__read) || function (o, n) {
     }
     return ar;
 };
+var _a;
 // Determine host environment.
 var IN_BROWSER = typeof self === "object";
 var IN_WORKER = typeof importScripts === "function";
@@ -45,12 +46,22 @@ var METHOD_APPLE_GOOGLE = 1;
 var METHOD_FREE_MOVEMENT = 2;
 var METHOD_LOCKDOWN = 3;
 var METHOD_SAFETYSCORE = 4;
+// Short method labels for use in graphs.
+var METHOD_LABELS = (_a = {},
+    _a[METHOD_APPLE_GOOGLE] = "Apple/Google",
+    _a[METHOD_FREE_MOVEMENT] = "Free Movement",
+    _a[METHOD_LOCKDOWN] = "Lockdown",
+    _a[METHOD_SAFETYSCORE] = "SafetyScore",
+    _a);
 // Attribute values for people.
 var PERSON_APP_FOREIGN_CLUSTER = 1;
 var PERSON_APP_INSTALLED = 2;
 var PERSON_APP_OWN_CLUSTER = 4;
 var PERSON_KEY_WORKER = 8;
 var PERSON_SYMPTOMATIC = 16;
+// Sort orders.
+var SORT_ASCENDING = 1;
+var SORT_DESCENDING = 2;
 // Status values.
 var STATUS_HEALTHY = 1;
 var STATUS_INFECTED = 2;
@@ -101,6 +112,331 @@ var AbstractedWorker = /** @class */ (function () {
         this.worker.terminate();
     };
     return AbstractedWorker;
+}());
+var Comparison = /** @class */ (function () {
+    function Comparison(ctrl, key, label, sort) {
+        this.ctrl = ctrl;
+        this.dirty = false;
+        this.height = 300;
+        this.key = key;
+        this.label = label;
+        this.max = 0;
+        this.methods = {};
+        this.sort = sort;
+        this.width = 0;
+    }
+    Comparison.prototype.downloadGraph = function (format) {
+        var filename = this.getFilename(format);
+        var height = 300;
+        var width = 760;
+        var graph = document.createElementNS(SVG, "svg");
+        graph.setAttribute("height", "100%");
+        graph.setAttribute("viewBox", "0 0 " + width + " " + height);
+        graph.setAttribute("width", "100%");
+        this.generateGraph(graph, height, width);
+        var svg = new XMLSerializer().serializeToString(graph);
+        downloadImage({ filename: filename, format: format, height: height, svg: svg, width: width });
+    };
+    Comparison.prototype.generateGraph = function ($graph, height, width) {
+        addNode($graph, "rect", {
+            fill: "#eeeeee",
+            height: height,
+            width: width,
+            x: 0,
+            y: 0,
+        });
+        if (this.max === 0) {
+            return;
+        }
+        var font = this.ctrl.cfg.imageFont;
+        var methodLabelHeight = 30;
+        var padMethodLabel = 15;
+        var padLeft = 60;
+        var padTop = 25;
+        var midX = Math.floor((width - padLeft) / 8);
+        var segment = midX * 2;
+        var ventiles = Math.ceil(this.max / 20);
+        var ventile = (height - methodLabelHeight - padTop) / ventiles;
+        // Draw the Y-axis labels.
+        var posY = padTop;
+        for (var i = ventiles; i >= 0; i--) {
+            addNode($graph, "text", {
+                "alignment-baseline": "middle",
+                "font-family": font,
+                "font-size": "12px",
+                "text-anchor": "end",
+                x: 40,
+                y: posY + 2,
+            }).innerHTML = "" + i * 20;
+            addNode($graph, "rect", {
+                x: 48,
+                y: posY,
+                width: 5,
+                height: 1,
+            });
+            posY += ventile;
+        }
+        // Draw the Y-axis line.
+        posY = posY - ventile + 1;
+        addNode($graph, "rect", {
+            x: 53,
+            y: padTop,
+            width: 1,
+            height: posY - padTop,
+        });
+        var top = height - methodLabelHeight;
+        var y = top - padTop;
+        for (var i = 0; i < METHODS.length; i++) {
+            var method = METHODS[i];
+            var box = this.methods[method];
+            if (typeof box === "undefined") {
+                continue;
+            }
+            // Draw the X-axis label.
+            var mid = i * segment + midX + padLeft;
+            addNode($graph, "text", {
+                "alignment-baseline": "middle",
+                "font-family": font,
+                "font-size": "12px",
+                "text-anchor": "middle",
+                x: mid,
+                y: height - methodLabelHeight + padMethodLabel,
+            }).innerHTML = METHOD_LABELS[method];
+            // Draw the median.
+            var medianY = top - y * (box.median / 100);
+            addNode($graph, "rect", {
+                x: mid - 9,
+                y: medianY,
+                width: 20,
+                height: 3,
+            });
+            // Label the median.
+            addNode($graph, "text", {
+                "alignment-baseline": "middle",
+                "font-family": font,
+                "font-size": "12px",
+                x: mid + 20,
+                y: medianY + 2,
+            }).innerHTML = decimal(box.median) + "%";
+            // Draw the top whisker.
+            var rheight = Math.max(1, y * ((box.max - box.q3) / 100));
+            var topY = top - y * (box.max / 100);
+            if (medianY - topY > 2) {
+                addNode($graph, "rect", {
+                    x: mid,
+                    y: topY,
+                    width: 2,
+                    height: rheight,
+                });
+            }
+            // Draw the bottom whisker.
+            var bottomY = top - y * (box.q1 / 100);
+            rheight = Math.max(1, y * ((box.q1 - box.min) / 100));
+            if (bottomY + rheight - medianY > 5) {
+                addNode($graph, "rect", {
+                    x: mid,
+                    y: bottomY,
+                    width: 2,
+                    height: rheight,
+                });
+            }
+        }
+    };
+    Comparison.prototype.getFilename = function (ext) {
+        return "simulation-" + this.key + "-" + Date.now() + "." + ext;
+    };
+    Comparison.prototype.hideInfo = function () {
+        if (this.handle) {
+            clearTimeout(this.handle);
+            this.handle = undefined;
+        }
+        hide(this.$info);
+    };
+    Comparison.prototype.markDirty = function () {
+        this.dirty = true;
+        this.ctrl.requestRedraw();
+    };
+    Comparison.prototype.render = function () {
+        if (!IN_BROWSER) {
+            return;
+        }
+        if (overlayShown || !this.dirty) {
+            return;
+        }
+        this.dirty = false;
+        this.renderSummary();
+        this.renderGraph();
+    };
+    Comparison.prototype.renderGraph = function () {
+        var $graph = this.$graph;
+        $graph.innerHTML = "";
+        this.generateGraph($graph, this.height, this.width);
+    };
+    Comparison.prototype.renderInfo = function (e) {
+        var _this = this;
+        var bounds = this.$graph.getBoundingClientRect();
+        var padLeft = 60;
+        var pos = e.clientX - bounds.left;
+        if (pos < padLeft || pos > this.width) {
+            if (this.handle) {
+                this.hideInfo();
+            }
+            return;
+        }
+        var segment = (this.width - padLeft) / METHODS.length;
+        var idx = Math.floor((pos - padLeft) / segment);
+        var method = METHODS[idx];
+        if (this.handle) {
+            clearTimeout(this.handle);
+            this.handle = undefined;
+        }
+        var box = this.methods[method];
+        if (typeof box === "undefined") {
+            this.hideInfo();
+            return;
+        }
+        var $info = (h("div", { class: "info" },
+            h("div", { class: "pad-bottom" },
+                h("strong", null, METHOD_LABELS[method])),
+            h("div", null,
+                "Maximum",
+                h("div", { class: "right value-" + this.key },
+                    decimal(box.max),
+                    "%")),
+            h("div", null,
+                "3",
+                h("sup", null, "rd"),
+                " Quartile",
+                h("div", { class: "right value-" + this.key },
+                    decimal(box.q3),
+                    "%")),
+            h("div", null,
+                "Median",
+                h("div", { class: "right value-" + this.key },
+                    decimal(box.median),
+                    "%")),
+            h("div", null,
+                "1",
+                h("sup", null, "st"),
+                " Quartile",
+                h("div", { class: "right value-" + this.key },
+                    decimal(box.q1),
+                    "%")),
+            h("div", null,
+                "Minimum",
+                h("div", { class: "right value-" + this.key },
+                    decimal(box.min),
+                    "%"))));
+        this.$info.replaceWith($info);
+        this.$info = $info;
+        show(this.$info);
+        this.handle = setTimeout(function () { return _this.hideInfo(); }, 2400);
+    };
+    Comparison.prototype.renderSummary = function () {
+        var $summary = h("div", { class: "summary" });
+        var data = [];
+        for (var i = 0; i < METHODS.length; i++) {
+            var method = METHODS[i];
+            var box = this.methods[method];
+            if (typeof box === "undefined") {
+                continue;
+            }
+            data.push({ label: METHOD_LABELS[method], value: box.median });
+        }
+        if (data.length === 0) {
+            $summary.appendChild(h("div", null, "Calculating ..."));
+        }
+        else {
+            if (this.sort === SORT_ASCENDING) {
+                data.sort(function (a, b) { return a.value - b.value; });
+            }
+            else if (this.sort === SORT_DESCENDING) {
+                data.sort(function (a, b) { return b.value - a.value; });
+            }
+            for (var i = 0; i < data.length; i++) {
+                var info = data[i];
+                $summary.appendChild(h("div", { class: "pad-bottom" },
+                    info.label,
+                    h("div", { class: "right value-" + this.key },
+                        decimal(info.value),
+                        "%")));
+            }
+        }
+        this.$summary.replaceWith($summary);
+        this.$summary = $summary;
+    };
+    Comparison.prototype.reset = function () {
+        this.dirty = true;
+        this.max = 0;
+        this.methods = {};
+    };
+    Comparison.prototype.setDimensions = function () {
+        if (!IN_BROWSER) {
+            return;
+        }
+        var width = this.$root.offsetWidth - this.$summary.offsetWidth;
+        if (width < 200) {
+            width = 200;
+        }
+        if (width === this.width) {
+            return;
+        }
+        this.$graph.setAttribute("height", "" + this.height);
+        this.$graph.setAttribute("width", "" + width);
+        this.$graph.setAttribute("viewBox", "0 0 " + width + " " + this.height);
+        this.width = width;
+        this.markDirty();
+    };
+    Comparison.prototype.setupUI = function () {
+        var _this = this;
+        var $downloadPNG = (h("div", { class: "action" },
+            h("img", { src: "download.svg", alt: "Download" }),
+            h("span", null, "Download PNG")));
+        $downloadPNG.addEventListener("click", function () { return _this.downloadGraph("png"); });
+        var $downloadSVG = (h("div", { class: "action" },
+            h("img", { src: "svg.svg", alt: "svg" }),
+            h("span", null, "Download SVG")));
+        $downloadSVG.addEventListener("click", function () { return _this.downloadGraph("svg"); });
+        var $graph = document.createElementNS(SVG, "svg");
+        $graph.addEventListener("mousemove", function (e) { return _this.renderInfo(e); });
+        $graph.addEventListener("mouseout", function () { return _this.hideInfo(); });
+        $graph.setAttribute("preserveAspectRatio", "none");
+        $graph.setAttribute("viewBox", "0 0 " + this.width + " " + this.height);
+        var $info = h("div", { class: "info" });
+        var $summary = h("div", { class: "summary" });
+        var $content = (h("div", { class: "content" },
+            h("div", { class: "graph-holder" },
+                $info,
+                $summary,
+                h("div", { class: "graph" }, $graph)),
+            h("div", { class: "clear" })));
+        var $root = (h("div", { class: "simulation" },
+            h("div", { class: "heading" },
+                "Comparison of % ",
+                this.label),
+            $downloadSVG,
+            $downloadPNG,
+            h("div", { class: "clear" }),
+            $content));
+        this.$graph = $graph;
+        this.$info = $info;
+        this.$root = $root;
+        this.$summary = $summary;
+        return $root;
+    };
+    Comparison.prototype.update = function (method, info) {
+        this.dirty = true;
+        if (info) {
+            if (info.max > this.max) {
+                this.max = info.max;
+            }
+            this.methods[method] = info;
+        }
+        else {
+            delete this.methods[method];
+        }
+    };
+    return Comparison;
 }());
 var ConfigValidator = /** @class */ (function () {
     function ConfigValidator(cfg) {
@@ -200,26 +536,17 @@ var ConfigValidator = /** @class */ (function () {
 var Controller = /** @class */ (function () {
     function Controller() {
         var cfg = defaultConfig();
+        cfg.runsMax = 1;
+        cfg.runsMin = 1;
         this.cfg = cfg;
+        this.cmps = [];
         this.definition = defaultConfigDefinition();
         this.rand = 1591652858676;
         this.paused = false;
         this.simList = [];
         this.sims = {};
     }
-    Controller.prototype.initBrowser = function () {
-        this.$main = $("main");
-        this.initSims(METHODS, true);
-        this.setDimensions();
-        this.run();
-        this.redraw();
-    };
-    Controller.prototype.initNodeJS = function (method) {
-        var cfg = this.cfg;
-        this.initSims([method], false);
-        this.run();
-    };
-    Controller.prototype.initSims = function (methods, setupUI) {
+    Controller.prototype.init = function (methods, setupUI) {
         for (var i = 0; i < methods.length; i++) {
             var method = methods[i];
             var sim = new Simulation(this, method);
@@ -229,6 +556,29 @@ var Controller = /** @class */ (function () {
             this.simList.push(sim);
             this.sims[method] = sim;
         }
+        var healthy = new Comparison(this, "healthy", "Healthy", SORT_DESCENDING);
+        var isolated = new Comparison(this, "isolated", "Isolated", SORT_ASCENDING);
+        var infected = new Comparison(this, "infected", "Infected", SORT_ASCENDING);
+        if (setupUI) {
+            this.$main.appendChild(healthy.setupUI());
+            this.$main.appendChild(isolated.setupUI());
+            this.$main.appendChild(infected.setupUI());
+        }
+        this.cmps.push(healthy);
+        this.cmps.push(isolated);
+        this.cmps.push(infected);
+    };
+    Controller.prototype.initBrowser = function () {
+        this.$main = $("main");
+        this.init(METHODS, true);
+        this.setDimensions();
+        this.run();
+        this.redraw();
+    };
+    Controller.prototype.initNodeJS = function (method) {
+        var cfg = this.cfg;
+        this.init([method], false);
+        this.run();
     };
     Controller.prototype.pause = function () {
         this.paused = true;
@@ -243,6 +593,9 @@ var Controller = /** @class */ (function () {
             for (var i = 0; i < this.simList.length; i++) {
                 this.simList[i].render();
             }
+            for (var i = 0; i < this.cmps.length; i++) {
+                this.cmps[i].render();
+            }
         }
         this.handle = 0;
     };
@@ -256,17 +609,18 @@ var Controller = /** @class */ (function () {
         }
         this.handle = requestAnimationFrame(function () { return _this.redraw(); });
     };
+    Controller.prototype.resetComparison = function () {
+        for (var i = 0; i < this.cmps.length; i++) {
+            this.cmps[i].reset();
+        }
+        this.requestRedraw();
+    };
     Controller.prototype.resume = function () {
         this.paused = false;
         this.requestRedraw();
     };
     Controller.prototype.run = function () {
-        this.range = {
-            dead: { max: -1, min: -1 },
-            healthy: { max: -1, min: -1 },
-            infected: { max: -1, min: -1 },
-            isolated: { max: -1, min: -1 },
-        };
+        this.resetComparison();
         for (var i = 0; i < this.simList.length; i++) {
             var sim = this.simList[i];
             if (!sim.hidden) {
@@ -287,13 +641,23 @@ var Controller = /** @class */ (function () {
         for (var i = 0; i < this.simList.length; i++) {
             this.simList[i].setDimensions();
         }
+        for (var i = 0; i < this.cmps.length; i++) {
+            this.cmps[i].setDimensions();
+        }
     };
-    Controller.prototype.updateRange = function (summary) {
-        var range = this.range;
-        updateMinMax(range.dead, summary.dead);
-        updateMinMax(range.healthy, summary.healthy);
-        updateMinMax(range.infected, summary.infected);
-        updateMinMax(range.isolated, summary.isolated);
+    Controller.prototype.updateComparison = function (method, info) {
+        if (info) {
+            for (var i = 0; i < this.cmps.length; i++) {
+                var cmp = this.cmps[i];
+                cmp.update(method, info[cmp.key]);
+            }
+        }
+        else {
+            for (var i = 0; i < this.cmps.length; i++) {
+                this.cmps[i].update(method);
+            }
+        }
+        this.requestRedraw();
     };
     return Controller;
 }());
@@ -1413,7 +1777,7 @@ var Simulation = /** @class */ (function () {
         var canvas = document.createElement("canvas");
         var ctx = canvas.getContext("2d");
         var height = 1500;
-        var summary = getSummary(results, 0);
+        var summary = getSummary(results);
         var width = 2400;
         var img = new Image(width, height);
         var url = URL.createObjectURL(blob);
@@ -1556,12 +1920,12 @@ var Simulation = /** @class */ (function () {
         this.markDirty();
         this.results.push(resp.stats);
         if (this.results.length === this.cfg.days) {
-            var summary = getSummary(this.results, this.summaries.length);
-            this.ctrl.updateRange(summary);
+            var summary = getSummary(this.results, this.summaries.length, this.rand);
             this.runs.push(this.results);
             this.runsUpdate = true;
             this.summaries.push(summary);
             this.summaries.sort(function (a, b) { return b.healthy - a.healthy; });
+            this.ctrl.updateComparison(this.method, this.computeBoxPlots());
             var runs = this.summaries.length;
             if (runs === this.cfg.runsMax) {
                 this.runsFinished = true;
@@ -1623,6 +1987,10 @@ var Simulation = /** @class */ (function () {
         this.ctrl.setDimensions();
     };
     Simulation.prototype.hideInfo = function () {
+        if (this.handle) {
+            clearTimeout(this.handle);
+            this.handle = undefined;
+        }
         hide(this.$info);
     };
     Simulation.prototype.hideSummaries = function () {
@@ -1642,6 +2010,7 @@ var Simulation = /** @class */ (function () {
     Simulation.prototype.randomise = function () {
         var rand = Date.now();
         console.log("Using random seed: " + rand);
+        this.ctrl.updateComparison(this.method);
         this.run(this.cfg, this.definition, rand);
     };
     Simulation.prototype.render = function () {
@@ -1656,14 +2025,6 @@ var Simulation = /** @class */ (function () {
         this.renderSummary(results);
         this.renderGraph(results);
         this.renderRuns();
-    };
-    Simulation.prototype.renderBoxPlot = function (info, label, colour) { };
-    Simulation.prototype.renderBoxPlots = function () {
-        var info = this.computeBoxPlots();
-        this.renderBoxPlot(info.healthy, "healthy", COLOUR_HEALTHY);
-        this.renderBoxPlot(info.infected, "infected", COLOUR_INFECTED);
-        this.renderBoxPlot(info.dead, "dead", COLOUR_DEAD);
-        this.renderBoxPlot(info.isolated, "isolated", "#000000");
     };
     Simulation.prototype.renderGraph = function (results) {
         if (!IN_BROWSER) {
@@ -1782,7 +2143,7 @@ var Simulation = /** @class */ (function () {
             }
             else {
                 view = (h("td", null,
-                    h("a", { href: "", onclick: function (e) {
+                    h("a", { href: "#" + summary.rand, title: "Run " + (idx + 1) + " of " + this_1.runs.length, onclick: function (e) {
                             e.preventDefault();
                             _this.selected = idx;
                             _this.runsUpdate = true;
@@ -1831,9 +2192,6 @@ var Simulation = /** @class */ (function () {
         }
         this.$tbody.replaceWith($tbody);
         this.$tbody = $tbody;
-        if (runs >= 5) {
-            this.renderBoxPlots();
-        }
     };
     Simulation.prototype.renderSummary = function (results) {
         if (!IN_BROWSER) {
@@ -1842,7 +2200,7 @@ var Simulation = /** @class */ (function () {
         if (results.length === 0) {
             return;
         }
-        var summary = getSummary(results, 0);
+        var summary = getSummary(results);
         var $summary = (h("div", { class: "summary" },
             h("div", null,
                 "Days",
@@ -1908,6 +2266,7 @@ var Simulation = /** @class */ (function () {
         }
         this.$graph.setAttribute("height", "" + this.height);
         this.$graph.setAttribute("width", "" + width);
+        this.runsUpdate = true;
         this.width = width;
         this.markDirty();
     };
@@ -1916,7 +2275,7 @@ var Simulation = /** @class */ (function () {
         this.handleToggle = function (e) { return _this.toggle(e); };
         var $download = (h("div", { class: "action" },
             h("img", { src: "download.svg", alt: "Download" }),
-            h("span", null, "Download Data")));
+            h("span", null, "Download PNG")));
         $download.addEventListener("click", function () { return _this.downloadGraph("png"); });
         hide($download);
         var $graph = document.createElementNS(SVG, "svg");
@@ -2104,6 +2463,9 @@ function computeBoxPlot(values) {
             break;
         }
     }
+    if (min > q1) {
+        min = q1;
+    }
     for (var i = values.length - 1; i >= 0; i--) {
         var v = values[i];
         if (v <= max) {
@@ -2111,12 +2473,16 @@ function computeBoxPlot(values) {
             break;
         }
     }
+    if (max < q3) {
+        max = q3;
+    }
     return {
         max: max,
         median: quantile(values, 0.5),
         min: min,
         q1: q1,
         q3: q3,
+        size: values.length,
     };
 }
 function decimal(v) {
@@ -2170,7 +2536,7 @@ function defaultConfig() {
         // likelihood of a notified person self-isolating
         isolationLikelihood: 0.9,
         // likelihood of an isolated person staying at home for any given period during lockdown
-        isolationLockdown: 0.95,
+        isolationLockdown: 0.9,
         // the SafetyScore level below which one is notified to self-isolate and test
         isolationThreshold: 50,
         // likelihood of a symptomatic individual self-isolating
@@ -2182,7 +2548,7 @@ function defaultConfig() {
         // number of days the number of infected people must be below "lockdownEnd" before lockdown ends
         lockdownEndWindow: 14,
         // the number of infected people which will trigger a lockdown
-        lockdownStart: 15,
+        lockdownStart: 7,
         // total number of people
         population: 10000,
         // number of days before becoming infectious
@@ -2214,7 +2580,7 @@ function defaultConfig() {
         // test all key workers
         testKeyWorkers: false,
         // likelihood of a key worker getting tested
-        testKeyWorker: 0.1,
+        testKeyWorker: 1,
         // likelihood of a person getting themselves tested if notified
         testNotified: 0.9,
         // likelihood of a person getting themselves tested if symptomatic
@@ -2359,7 +2725,7 @@ function getMethodLabel(method) {
     }
     throw "Unknown method: " + method;
 }
-function getSummary(results, idx) {
+function getSummary(results, idx, rand) {
     var days = results.length;
     var last = results[results.length - 1];
     var total = last.healthy + last.dead + last.recovered + last.infected;
@@ -2375,10 +2741,11 @@ function getSummary(results, idx) {
         days: days,
         dead: dead,
         healthy: healthy,
-        idx: idx,
+        idx: idx || 0,
         infected: infected,
         isolated: isolated,
         population: total,
+        rand: rand || 0,
     };
 }
 function getZeta(n, theta) {
@@ -2633,20 +3000,6 @@ function updateConfig(e) {
     $("overlay").style.display = "none";
     ctrl.resume();
     ctrl.runNew(cfg, definition);
-}
-function updateMinMax(m, v) {
-    if (m.max === -1) {
-        m.max = v;
-        m.min = v;
-    }
-    else {
-        if (v > m.max) {
-            m.max = v;
-        }
-        if (v < m.min) {
-            m.min = v;
-        }
-    }
 }
 function updateMirror(src) {
     var code = Prism.highlight(src, Prism.languages.javascript);
