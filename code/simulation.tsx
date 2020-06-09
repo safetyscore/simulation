@@ -315,12 +315,12 @@ class BarChart {
   height: number
   inner: number
   labelHeight: number
-  legendWidth: number
   padLabel: number
   padLeft: number
   padTop: number
   top: number
   width: number
+  $content: HTMLElement
   $graph: SVGElement
   $root: HTMLElement
 
@@ -329,8 +329,7 @@ class BarChart {
     this.data = {}
     this.dirty = true
     this.height = 300
-    this.labelHeight = 35
-    this.legendWidth = 150
+    this.labelHeight = 40
     this.padLabel = 25
     this.padLeft = 60
     this.padTop = 25
@@ -356,7 +355,7 @@ class BarChart {
       y: this.height - this.labelHeight + this.padLabel,
     }).innerHTML = label
     // Draw the bars for the different methods.
-    const start = midX - 90
+    const start = midX - 160
     for (let i = 0; i < METHODS.length; i++) {
       const method = METHODS[i]
       const data = this.data[method]
@@ -365,34 +364,25 @@ class BarChart {
       }
       const median = data[key].median
       const height = Math.round((median / 100) * this.inner)
+      const posX = start + i * 80
+      const posY = this.top - height
       addNode($graph, "rect", {
         fill: METHOD_COLOURS[method],
         height: height,
-        width: 30,
-        x: start + i * 50,
-        y: this.top - height,
+        width: 50,
+        x: posX,
+        y: posY,
       })
+      addNode($graph, "text", {
+        "alignment-baseline": "middle",
+        "font-family": font,
+        "font-size": "11px",
+        "text-anchor": "middle",
+        x: posX + 25,
+        y: posY - 12,
+      }).innerHTML = METHOD_LABELS[method]
     }
   }
-
-  drawLegend($graph: SVGElement, font: string, idx: number, method: number) {
-    const posX = this.width - this.legendWidth
-    const posY = this.top - 21 - (30 * (METHODS.length - idx - 1))
-    addNode($graph, "rect", {
-      fill: METHOD_COLOURS[method],
-      height: 20,
-      width: 20,
-      x: posX,
-      y: posY,
-    })
-    addNode($graph, "text", {
-      "alignment-baseline": "middle",
-      "font-family": font,
-      "font-size": "12px",
-      x: posX + 30,
-      y: posY + 10,
-    }).innerHTML = METHOD_LABELS[method]
-}
 
   downloadGraph(format: string) {
     const filename = this.getFilename(format)
@@ -416,7 +406,7 @@ class BarChart {
       y: 0,
     })
     const font = this.ctrl.cfg.imageFont
-    const midX = Math.floor((width - this.padLeft - this.legendWidth) / 4)
+    const midX = Math.floor((width - this.padLeft) / 4)
     const segment = midX * 2
     const ventile = (height - this.labelHeight - this.padTop) / 5
     // Draw the Y-axis labels.
@@ -456,10 +446,6 @@ class BarChart {
       "Isolated",
       segment + midX + this.padLeft
     )
-    // Draw the legend for the methods.
-    for (let i = 0; i < METHODS.length; i++) {
-      this.drawLegend($graph, font, i, METHODS[i])
-    }
   }
 
   getFilename(ext: string) {
@@ -493,8 +479,12 @@ class BarChart {
     if (width < 800) {
       width = 800
     }
-    if (width === this.width) {
-      return
+    const buffer = 238
+    if (width > 800 + 238) {
+      this.$content.style.paddingLeft = `${buffer}px`
+      width -= buffer
+    } else {
+      this.$content.style.paddingLeft = "0px"
     }
     this.$graph.setAttribute("viewBox", `0 0 ${width} ${this.height}`)
     this.width = width
@@ -521,16 +511,18 @@ class BarChart {
     $graph.setAttribute("preserveAspectRatio", "none")
     $graph.setAttribute("viewBox", `0 0 ${this.width} ${this.height}`)
     $graph.setAttribute("width", "100%")
+    const $content = <div class="content">{$graph}</div>
     const $root = (
       <div class="simulation">
-        <div class="heading">Results</div>
+        <div class="heading"></div>
         {$downloadSVG}
         {$downloadPNG}
         <div class="clear"></div>
-        <div class="content">{$graph}</div>
+        {$content}
         <div class="clear"></div>
       </div>
     )
+    this.$content = $content
     this.$graph = $graph
     this.$root = $root
     return $root
