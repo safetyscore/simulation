@@ -248,6 +248,10 @@ var BarChart = /** @class */ (function () {
         $graph.innerHTML = "";
         this.generateGraph($graph, this.height, this.width);
     };
+    BarChart.prototype.reset = function () {
+        this.data = {};
+        this.dirty = true;
+    };
     BarChart.prototype.setDimensions = function () {
         if (!IN_BROWSER) {
             return;
@@ -805,6 +809,7 @@ var Controller = /** @class */ (function () {
         this.handle = requestAnimationFrame(function () { return _this.redraw(); });
     };
     Controller.prototype.resetComparison = function () {
+        this.barchart.reset();
         for (var i = 0; i < this.cmps.length; i++) {
             this.cmps[i].reset();
         }
