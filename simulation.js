@@ -753,17 +753,14 @@ var Controller = /** @class */ (function () {
         var barchart = new BarChart(this);
         var healthy = new Comparison(this, "healthy", "Healthy", SORT_DESCENDING);
         var isolated = new Comparison(this, "isolated", "Isolated", SORT_ASCENDING);
-        var infected = new Comparison(this, "infected", "Infected", SORT_ASCENDING);
         if (setupUI) {
             this.$main.appendChild(barchart.setupUI());
             this.$main.appendChild(healthy.setupUI());
             this.$main.appendChild(isolated.setupUI());
-            this.$main.appendChild(infected.setupUI());
         }
         this.barchart = barchart;
         this.cmps.push(healthy);
         this.cmps.push(isolated);
-        this.cmps.push(infected);
     };
     Controller.prototype.initBrowser = function () {
         this.$main = $("main");
