@@ -202,7 +202,7 @@ var Controller = /** @class */ (function () {
         var cfg = defaultConfig();
         this.cfg = cfg;
         this.definition = defaultConfigDefinition();
-        this.rand = 1591652858672 + 4;
+        this.rand = 1591652858676;
         this.paused = false;
         this.simList = [];
         this.sims = {};
@@ -1339,13 +1339,13 @@ var Simulation = /** @class */ (function () {
         this.variance = 0;
         this.width = 0;
     }
-    Simulation.prototype.computeBoxPlots = function (summaries) {
+    Simulation.prototype.computeBoxPlots = function () {
         var dead = [];
         var healthy = [];
         var infected = [];
         var isolated = [];
-        for (var i = 0; i < summaries.length; i++) {
-            var summary = summaries[i];
+        for (var i = 0; i < this.summaries.length; i++) {
+            var summary = this.summaries[i];
             dead.push(summary.dead);
             healthy.push(summary.healthy);
             infected.push(summary.infected);
@@ -1626,9 +1626,14 @@ var Simulation = /** @class */ (function () {
         hide(this.$info);
     };
     Simulation.prototype.hideSummaries = function () {
+        if (!this.summariesShown) {
+            return;
+        }
+        this.runsUpdate = true;
         this.summariesShown = false;
         this.$summariesLink.innerHTML = "Show All";
         hide(this.$summaries);
+        this.markDirty();
     };
     Simulation.prototype.markDirty = function () {
         this.dirty = true;
@@ -1654,7 +1659,7 @@ var Simulation = /** @class */ (function () {
     };
     Simulation.prototype.renderBoxPlot = function (info, label, colour) { };
     Simulation.prototype.renderBoxPlots = function () {
-        var info = this.computeBoxPlots(this.summaries);
+        var info = this.computeBoxPlots();
         this.renderBoxPlot(info.healthy, "healthy", COLOUR_HEALTHY);
         this.renderBoxPlot(info.infected, "infected", COLOUR_INFECTED);
         this.renderBoxPlot(info.dead, "dead", COLOUR_DEAD);
@@ -1734,13 +1739,29 @@ var Simulation = /** @class */ (function () {
         }
         this.runsUpdate = false;
         var runs = this.runs.length;
+        var linkedStatus = false;
         var status = "";
         if (!this.runsFinished) {
             if (!(this.cfg.runsMin === 1 && this.cfg.runsMax === 1)) {
-                status = "Run #" + (this.runs.length + 1);
+                status = "Running #" + (this.runs.length + 1);
+                if (this.summariesShown && this.selected !== -1) {
+                    linkedStatus = true;
+                }
             }
         }
-        this.$status.innerHTML = status;
+        if (linkedStatus) {
+            this.$status.innerHTML = "";
+            this.$status.appendChild(h("a", { href: "", onclick: function (e) {
+                    e.preventDefault();
+                    if (_this.selected !== -1) {
+                        _this.selected = -1;
+                    }
+                    _this.hideSummaries();
+                } }, status));
+        }
+        else {
+            this.$status.innerHTML = status;
+        }
         if (runs === 0) {
             if (!this.summariesShown) {
                 hide(this.$summariesLink);
@@ -1999,9 +2020,11 @@ var Simulation = /** @class */ (function () {
         this.run(ctrl.cfg, ctrl.definition, ctrl.rand);
     };
     Simulation.prototype.showSummaries = function () {
+        this.runsUpdate = true;
         this.summariesShown = true;
         this.$summariesLink.innerHTML = "Hide All";
         show(this.$summaries);
+        this.markDirty();
     };
     Simulation.prototype.toggle = function (e) {
         if (e) {
@@ -2015,7 +2038,9 @@ var Simulation = /** @class */ (function () {
         }
     };
     Simulation.prototype.toggleSummaries = function (e) {
-        e.preventDefault();
+        if (e) {
+            e.preventDefault();
+        }
         if (this.summariesShown) {
             this.hideSummaries();
         }
@@ -2133,7 +2158,7 @@ function defaultConfig() {
         // likelihood of someone installing SafetyScore for visiting a foreign safeguarded cluster
         installForeign: 0,
         // likelihood of someone installing SafetyScore if one of their own clusters becomes safeguarded
-        installOwn: 0,
+        installOwn: 1,
         // whether the app is installed for the whole household during initial installations
         installHousehold: false,
         // isolate whole household if someone self-isolates
@@ -2177,7 +2202,7 @@ function defaultConfig() {
         // the portion of clusters who safeguard access via SafetyScore
         safeguardedClusters: 2 / 3,
         // the portion of people who have SafetyScore installed at the start
-        safetyScoreInstalled: 2 / 3,
+        safetyScoreInstalled: 0,
         // a multiplicative weighting factor for second-degree tokens
         secondDegreeWeight: 1,
         // likelihood of a symptomatic person self-attesting
@@ -2408,6 +2433,7 @@ function handleInlayClick(e) {
     e.stopPropagation();
 }
 function handleKeyboard(e) {
+    var e_1, _a;
     if (overlayShown) {
         if (e.code === "Escape") {
             handleOverlayClick();
@@ -2425,6 +2451,22 @@ function handleKeyboard(e) {
     }
     if (e.code === "KeyR" && ctrl) {
         ctrl.randomise();
+        return;
+    }
+    if (e.code === "KeyX" && ctrl) {
+        try {
+            for (var _b = __values(ctrl.simList), _c = _b.next(); !_c.done; _c = _b.next()) {
+                var sim = _c.value;
+                sim.toggleSummaries();
+            }
+        }
+        catch (e_1_1) { e_1 = { error: e_1_1 }; }
+        finally {
+            try {
+                if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
+            }
+            finally { if (e_1) throw e_1.error; }
+        }
         return;
     }
 }
@@ -2482,7 +2524,7 @@ function percent(v) {
     return Math.round(v) + "%";
 }
 function printDistribution(dist) {
-    var e_1, _a;
+    var e_2, _a;
     var bins = {};
     var rng = new RNG("dist");
     for (var i = 0; i < 100000; i++) {
@@ -2501,12 +2543,12 @@ function printDistribution(dist) {
             console.log(i + "," + bins[i]);
         }
     }
-    catch (e_1_1) { e_1 = { error: e_1_1 }; }
+    catch (e_2_1) { e_2 = { error: e_2_1 }; }
     finally {
         try {
             if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         }
-        finally { if (e_1) throw e_1.error; }
+        finally { if (e_2) throw e_2.error; }
     }
 }
 function printUsage() {
@@ -2670,7 +2712,7 @@ function validateConfig(cfg) {
     return cfg;
 }
 function runMulti(times, method) {
-    var e_2, _a;
+    var e_3, _a;
     var cfg = defaultConfig();
     var results = [];
     for (var i = 0; i < times; i++) {
@@ -2694,12 +2736,12 @@ function runMulti(times, method) {
             console.log(result);
         }
     }
-    catch (e_2_1) { e_2 = { error: e_2_1 }; }
+    catch (e_3_1) { e_3 = { error: e_3_1 }; }
     finally {
         try {
             if (results_1_1 && !results_1_1.done && (_a = results_1.return)) _a.call(results_1);
         }
-        finally { if (e_2) throw e_2.error; }
+        finally { if (e_3) throw e_3.error; }
     }
 }
 function main() {
