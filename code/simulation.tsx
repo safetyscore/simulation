@@ -65,6 +65,7 @@ declare namespace JSX {
     img: ElemProps
     span: ElemProps
     sub: ElemProps
+    sup: ElemProps
     table: ElemProps
     tbody: ElemProps
     td: ElemProps
@@ -165,6 +166,7 @@ interface ElemProps {
   href?: string
   class?: string
   src?: string
+  title?: string
   width?: string
 }
 
@@ -237,13 +239,7 @@ interface Summary {
   infected: number
   isolated: number
   population: number
-}
-
-interface SummaryBoxPlot {
-  dead: BoxPlot
-  healthy: BoxPlot
-  infected: BoxPlot
-  isolated: BoxPlot
+  rand: number
 }
 
 interface SummaryRange {
@@ -1642,7 +1638,7 @@ class Simulation {
   variance: number
   width: number
   worker?: AbstractedWorker
-  $boxplot: SVGElement
+  $boxplots: HTMLElement
   $content: HTMLElement
   $download: HTMLElement
   $info: HTMLElement
@@ -1679,21 +1675,15 @@ class Simulation {
   }
 
   computeBoxPlots() {
-    const dead = []
     const healthy = []
-    const infected = []
     const isolated = []
     for (let i = 0; i < this.summaries.length; i++) {
       const summary = this.summaries[i]
-      dead.push(summary.dead)
       healthy.push(summary.healthy)
-      infected.push(summary.infected)
       isolated.push(summary.isolated)
     }
     return {
-      dead: computeBoxPlot(dead),
       healthy: computeBoxPlot(healthy),
-      infected: computeBoxPlot(infected),
       isolated: computeBoxPlot(isolated),
     }
   }
@@ -1759,7 +1749,7 @@ class Simulation {
     const canvas = document.createElement("canvas")
     const ctx = canvas.getContext("2d")!
     const height = 1500
-    const summary = getSummary(results, 0)
+    const summary = getSummary(results)
     const width = 2400
     const img = new Image(width, height)
     const url = URL.createObjectURL(blob)
@@ -1824,6 +1814,77 @@ class Simulation {
       })
     }
     img.src = url
+  }
+
+  generateBoxPlot(info: BoxPlot) {
+    const height = 100
+    const hpad1 = Math.floor(0.3 * height)
+    const hpad2 = Math.floor(0.2 * height)
+    const mid = Math.floor(height / 2)
+    const padding = 60
+    const width = this.width
+    const pct = (width - 2 * padding) / 100
+    const img = document.createElementNS(SVG, "svg")
+    img.setAttribute("height", `${height}`)
+    img.setAttribute("preserveAspectRatio", "none")
+    img.setAttribute("viewBox", `0 0 ${width} ${height}`)
+    img.setAttribute("width", `${width}`)
+    const min = padding + Math.floor(pct * info.min)
+    addNode(img, "rect", {
+      fill: "#000000",
+      height: height - (2 * hpad1),
+      width: 2,
+      x: min,
+      y: hpad1,
+    })
+    const max = padding + Math.ceil(pct * info.max)
+    addNode(img, "rect", {
+      fill: "#000000",
+      height: height - (2 * hpad1),
+      width: 2,
+      x: max,
+      y: hpad1,
+    })
+    const median = padding + Math.floor(pct * info.median)
+    const q1 = padding + Math.floor(pct * info.q1)
+    const q3 = padding + Math.ceil(pct * info.q3)
+    addNode(img, "line", {
+      stroke: "#000000",
+      "stroke-dasharray": "4 1",
+      x1: min,
+      x2: q1,
+      y1: mid,
+      y2: mid,
+    })
+    addNode(img, "line", {
+      stroke: "#000000",
+      "stroke-dasharray": "4 1",
+      x1: q3,
+      x2: max,
+      y1: mid,
+      y2: mid,
+    })
+    addNode(img, "rect", {
+      fill: "#ffffff",
+      height: height - (2 * hpad2),
+      stroke: "#000000",
+      "stroke-width": 1,
+      width: q3 - q1,
+      x: q1,
+      y: hpad2,
+    })
+    addNode(img, "rect", {
+      fill: "#000000",
+      height: height - (2 * hpad2),
+      width: 2,
+      x: median,
+      y: hpad2,
+    })
+    addNode(img, "text", {
+      x: max + 10,
+      y: height / 2 + 7,
+    }).innerHTML = `${decimal(info.max)}%`
+    return img
   }
 
   generateGraph($graph: SVGElement, results: Stats[]) {
@@ -1906,7 +1967,7 @@ class Simulation {
     this.markDirty()
     this.results.push(resp.stats)
     if (this.results.length === this.cfg.days) {
-      const summary = getSummary(this.results, this.summaries.length)
+      const summary = getSummary(this.results, this.summaries.length, this.rand)
       this.ctrl.updateRange(summary)
       this.runs.push(this.results)
       this.runsUpdate = true
@@ -1984,6 +2045,9 @@ class Simulation {
     this.runsUpdate = true
     this.summariesShown = false
     this.$summariesLink.innerHTML = "Show All"
+    if (this.$boxplots.classList.contains("summaries-shown")) {
+      this.$boxplots.classList.remove("summaries-shown")
+    }
     hide(this.$summaries)
     this.markDirty()
   }
@@ -2013,14 +2077,70 @@ class Simulation {
     this.renderRuns()
   }
 
-  renderBoxPlot(info: BoxPlot, label: string, colour: string) {}
+  renderBoxPlot(info: BoxPlot, label: string, style: string) {
+    if (isNaN(info.q1)) {
+      info = {
+        median: 20.0223,
+        q1: 14,
+        q3: 40,
+        min: 1,
+        max: 70,
+      }
+    }
+    const $img = <div class="boxplot-image">{this.generateBoxPlot(info)}</div>
+    const $info = (
+      <div>
+        <div>
+          Minimum<div class="right value">{decimal(info.min)}%</div>
+        </div>
+        <div>
+          1<sup>st</sup> Quartile
+          <div class="right value">{decimal(info.q1)}%</div>
+        </div>
+        <div>
+          3<sup>rd</sup> Quartile
+          <div class="right value">{decimal(info.q3)}%</div>
+        </div>
+        <div>
+          Maximum<div class="right value">{decimal(info.max)}%</div>
+        </div>
+      </div>
+    )
+    let handle: ReturnType<typeof setTimeout>
+    $img.addEventListener("mousemove", () => {
+      show($info)
+      if (handle) {
+        clearTimeout(handle)
+      }
+      handle = setTimeout(() => hide($info), 1200)
+    })
+    $img.addEventListener("mouseout", () => {
+      if (handle) {
+        clearTimeout(handle)
+      }
+      hide($info)
+    })
+    hide($info)
+    this.$boxplots.appendChild(
+      <div class="boxplot">
+        <div class="boxplot-info">
+          <div class={style}>
+            {label}
+            <div class={`right ${style}`}>{decimal(info.median)}%</div>
+          </div>
+          {$info}
+        </div>
+        {$img}
+      </div>
+    )
+  }
 
   renderBoxPlots() {
     const info = this.computeBoxPlots()
-    this.renderBoxPlot(info.healthy, "healthy", COLOUR_HEALTHY)
-    this.renderBoxPlot(info.infected, "infected", COLOUR_INFECTED)
-    this.renderBoxPlot(info.dead, "dead", COLOUR_DEAD)
-    this.renderBoxPlot(info.isolated, "isolated", "#000000")
+    this.$boxplots.innerHTML = ""
+    this.renderBoxPlot(info.healthy, "Healthy", "value-healthy")
+    this.renderBoxPlot(info.isolated, "Isolated", "value-dead")
+    show(this.$boxplots)
   }
 
   renderGraph(results: Stats[]) {
@@ -2150,7 +2270,8 @@ class Simulation {
         view = (
           <td>
             <a
-              href=""
+              href={`#${summary.rand}`}
+              title={`Run ${idx + 1} of ${this.runs.length}`}
               onclick={(e: Event) => {
                 e.preventDefault()
                 this.selected = idx
@@ -2214,7 +2335,7 @@ class Simulation {
     if (results.length === 0) {
       return
     }
-    const summary = getSummary(results, 0)
+    const summary = getSummary(results)
     const $summary = (
       <div class="summary">
         <div>
@@ -2267,6 +2388,7 @@ class Simulation {
     this.worker.onMessage((msg: WorkerResponse) => this.handleMessage(msg))
     this.worker.postMessage({definition, method: this.method, rand})
     this.markDirty()
+    hide(this.$boxplots)
     hide(this.$download)
   }
 
@@ -2286,12 +2408,14 @@ class Simulation {
     }
     this.$graph.setAttribute("height", `${this.height}`)
     this.$graph.setAttribute("width", `${width}`)
+    this.runsUpdate = true
     this.width = width
     this.markDirty()
   }
 
   setupUI() {
     this.handleToggle = (e: Event) => this.toggle(e)
+    const $boxplots = <div class="boxplots"></div>
     const $download = (
       <div class="action">
         <img src="download.svg" alt="Download" />
@@ -2375,6 +2499,8 @@ class Simulation {
         </div>
         <div class="clear"></div>
         {$summaries}
+        {$boxplots}
+        <div class="clear"></div>
       </div>
     )
     const $root = (
@@ -2388,6 +2514,7 @@ class Simulation {
         {$content}
       </div>
     )
+    this.$boxplots = $boxplots
     this.$content = $content
     this.$download = $download
     this.$graph = $graph
@@ -2432,6 +2559,9 @@ class Simulation {
     this.runsUpdate = true
     this.summariesShown = true
     this.$summariesLink.innerHTML = "Hide All"
+    if (!this.$boxplots.classList.contains("summaries-shown")) {
+      this.$boxplots.classList.add("summaries-shown")
+    }
     show(this.$summaries)
     this.markDirty()
   }
@@ -2802,7 +2932,7 @@ function getMethodLabel(method: number) {
   throw `Unknown method: ${method}`
 }
 
-function getSummary(results: Stats[], idx: number) {
+function getSummary(results: Stats[], idx?: number, rand?: number) {
   const days = results.length
   const last = results[results.length - 1]
   const total = last.healthy + last.dead + last.recovered + last.infected
@@ -2818,10 +2948,11 @@ function getSummary(results: Stats[], idx: number) {
     days,
     dead,
     healthy,
-    idx,
+    idx: idx || 0,
     infected,
     isolated,
     population: total,
+    rand: rand || 0,
   }
 }
 
