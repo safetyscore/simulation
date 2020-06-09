@@ -23,12 +23,24 @@ const METHOD_FREE_MOVEMENT = 2
 const METHOD_LOCKDOWN = 3
 const METHOD_SAFETYSCORE = 4
 
+// Short method labels for use in graphs.
+const METHOD_LABELS: Record<number, string> = {
+  [METHOD_APPLE_GOOGLE]: "Apple/Google",
+  [METHOD_FREE_MOVEMENT]: "Free Movement",
+  [METHOD_LOCKDOWN]: "Lockdown",
+  [METHOD_SAFETYSCORE]: "SafetyScore",
+}
+
 // Attribute values for people.
 const PERSON_APP_FOREIGN_CLUSTER = 1
 const PERSON_APP_INSTALLED = 2
 const PERSON_APP_OWN_CLUSTER = 4
 const PERSON_KEY_WORKER = 8
 const PERSON_SYMPTOMATIC = 16
+
+// Sort orders.
+const SORT_ASCENDING = 1
+const SORT_DESCENDING = 2
 
 // Status values.
 const STATUS_HEALTHY = 1
@@ -64,6 +76,7 @@ declare namespace JSX {
     div: ElemProps
     img: ElemProps
     span: ElemProps
+    strong: ElemProps
     sub: ElemProps
     sup: ElemProps
     table: ElemProps
@@ -86,6 +99,7 @@ interface BoxPlot {
   min: number
   q1: number
   q3: number
+  size: number
 }
 
 interface Cluster {
@@ -170,11 +184,6 @@ interface ElemProps {
   width?: string
 }
 
-interface MinMax {
-  max: number
-  min: number
-}
-
 interface NodeEventEmitter {
   on(eventName: string, listener: any): NodeEventEmitter
 }
@@ -242,11 +251,11 @@ interface Summary {
   rand: number
 }
 
-interface SummaryRange {
-  dead: MinMax
-  healthy: MinMax
-  infected: MinMax
-  isolated: MinMax
+interface SummaryBoxPlot {
+  dead: BoxPlot
+  healthy: BoxPlot
+  infected: BoxPlot
+  isolated: BoxPlot
 }
 
 interface WorkerRequest {
@@ -288,6 +297,367 @@ class AbstractedWorker {
 
   terminate() {
     this.worker.terminate()
+  }
+}
+
+class Comparison {
+  ctrl: Controller
+  dirty: boolean
+  handle?: ReturnType<typeof setTimeout>
+  height: number
+  key: keyof SummaryBoxPlot
+  label: string
+  max: number
+  methods: Record<number, BoxPlot>
+  sort: number
+  width: number
+  $download: HTMLElement
+  $graph: SVGElement
+  $info: HTMLElement
+  $root: HTMLElement
+  $summary: HTMLElement
+
+  constructor(
+    ctrl: Controller,
+    key: keyof SummaryBoxPlot,
+    label: string,
+    sort: number
+  ) {
+    this.ctrl = ctrl
+    this.dirty = false
+    this.height = 300
+    this.key = key
+    this.label = label
+    this.max = 0
+    this.methods = {}
+    this.sort = sort
+    this.width = 0
+  }
+
+  downloadGraph(format: string) {
+    const filename = this.getFilename(format)
+    const height = 300
+    const width = 760
+    const graph = document.createElementNS(SVG, "svg")
+    graph.setAttribute("height", "100%")
+    graph.setAttribute("viewBox", `0 0 ${width} ${height}`)
+    graph.setAttribute("width", "100%")
+    this.generateGraph(graph, height, width)
+    const svg = new XMLSerializer().serializeToString(graph)
+    downloadImage({filename, format, height, svg, width})
+  }
+
+  generateGraph($graph: SVGElement, height: number, width: number) {
+    addNode($graph, "rect", {
+      fill: "#eeeeee",
+      height: height,
+      width: width,
+      x: 0,
+      y: 0,
+    })
+    if (this.max === 0) {
+      return
+    }
+    const font = this.ctrl.cfg.imageFont
+    const methodLabelHeight = 30
+    const padMethodLabel = 15
+    const padLeft = 60
+    const padTop = 25
+    const midX = Math.floor((width - padLeft) / 8)
+    const segment = midX * 2
+    const ventiles = Math.ceil(this.max / 20)
+    const ventile = (height - methodLabelHeight - padTop) / ventiles
+    // Draw the Y-axis labels.
+    let posY = padTop
+    for (let i = ventiles; i >= 0; i--) {
+      addNode($graph, "text", {
+        "alignment-baseline": "middle",
+        "font-family": font,
+        "font-size": "12px",
+        "text-anchor": "end",
+        x: 40,
+        y: posY + 2,
+      }).innerHTML = `${i * 20}`
+      addNode($graph, "rect", {
+        x: 48,
+        y: posY,
+        width: 5,
+        height: 1,
+      })
+      posY += ventile
+    }
+    // Draw the Y-axis line.
+    posY = posY - ventile + 1
+    addNode($graph, "rect", {
+      x: 53,
+      y: padTop,
+      width: 1,
+      height: posY - padTop,
+    })
+    const top = height - methodLabelHeight
+    const y = top - padTop
+    for (let i = 0; i < METHODS.length; i++) {
+      const method = METHODS[i]
+      const box = this.methods[method]
+      if (typeof box === "undefined") {
+        continue
+      }
+      // Draw the X-axis label.
+      const mid = i * segment + midX + padLeft
+      addNode($graph, "text", {
+        "alignment-baseline": "middle",
+        "font-family": font,
+        "font-size": "12px",
+        "text-anchor": "middle",
+        x: mid,
+        y: height - methodLabelHeight + padMethodLabel,
+      }).innerHTML = METHOD_LABELS[method]
+      // Draw the median.
+      const medianY = top - y * (box.median / 100)
+      addNode($graph, "rect", {
+        x: mid - 9,
+        y: medianY,
+        width: 20,
+        height: 3,
+      })
+      // Label the median.
+      addNode($graph, "text", {
+        "alignment-baseline": "middle",
+        "font-family": font,
+        "font-size": "12px",
+        x: mid + 20,
+        y: medianY + 2,
+      }).innerHTML = `${decimal(box.median)}%`
+      // Draw the top whisker.
+      let rheight = Math.max(1, y * ((box.max - box.q3) / 100))
+      const topY = top - y * (box.max / 100)
+      if (medianY - topY > 2) {
+        addNode($graph, "rect", {
+          x: mid,
+          y: topY,
+          width: 2,
+          height: rheight,
+        })
+      }
+      // Draw the bottom whisker.
+      const bottomY = top - y * (box.q1 / 100)
+      rheight = Math.max(1, y * ((box.q1 - box.min) / 100))
+      if (bottomY + rheight - medianY > 5) {
+        addNode($graph, "rect", {
+          x: mid,
+          y: bottomY,
+          width: 2,
+          height: rheight,
+        })
+      }
+    }
+  }
+
+  getFilename(ext: string) {
+    return `simulation-${this.key}-${Date.now()}.${ext}`
+  }
+
+  hideInfo() {
+    if (this.handle) {
+      clearTimeout(this.handle)
+      this.handle = undefined
+    }
+    hide(this.$info)
+  }
+
+  markDirty() {
+    this.dirty = true
+    this.ctrl.requestRedraw()
+  }
+
+  render() {
+    if (!IN_BROWSER) {
+      return
+    }
+    if (overlayShown || !this.dirty) {
+      return
+    }
+    this.dirty = false
+    this.renderSummary()
+    this.renderGraph()
+  }
+
+  renderGraph() {
+    const $graph = this.$graph
+    $graph.innerHTML = ""
+    this.generateGraph($graph, this.height, this.width)
+  }
+
+  renderInfo(e: MouseEvent) {
+    const bounds = this.$graph.getBoundingClientRect()
+    const padLeft = 60
+    const pos = e.clientX - bounds.left
+    if (pos < padLeft || pos > this.width) {
+      if (this.handle) {
+        this.hideInfo()
+      }
+      return
+    }
+    const segment = (this.width - padLeft) / METHODS.length
+    const idx = Math.floor((pos - padLeft) / segment)
+    const method = METHODS[idx]
+    if (this.handle) {
+      clearTimeout(this.handle)
+      this.handle = undefined
+    }
+    const box = this.methods[method]
+    if (typeof box === "undefined") {
+      this.hideInfo()
+      return
+    }
+    const $info = (
+      <div class="info">
+        <div class="pad-bottom">
+          <strong>{METHOD_LABELS[method]}</strong>
+        </div>
+        <div>
+          Maximum
+          <div class={`right value-${this.key}`}>{decimal(box.max)}%</div>
+        </div>
+        <div>
+          3<sup>rd</sup> Quartile
+          <div class={`right value-${this.key}`}>{decimal(box.q3)}%</div>
+        </div>
+        <div>
+          Median
+          <div class={`right value-${this.key}`}>{decimal(box.median)}%</div>
+        </div>
+        <div>
+          1<sup>st</sup> Quartile
+          <div class={`right value-${this.key}`}>{decimal(box.q1)}%</div>
+        </div>
+        <div>
+          Minimum
+          <div class={`right value-${this.key}`}>{decimal(box.min)}%</div>
+        </div>
+      </div>
+    )
+    this.$info.replaceWith($info)
+    this.$info = $info
+    show(this.$info)
+    this.handle = setTimeout(() => this.hideInfo(), 2400)
+  }
+
+  renderSummary() {
+    const $summary = <div class="summary"></div>
+    const data = []
+    for (let i = 0; i < METHODS.length; i++) {
+      const method = METHODS[i]
+      const box = this.methods[method]
+      if (typeof box === "undefined") {
+        continue
+      }
+      data.push({label: METHOD_LABELS[method], value: box.median})
+    }
+    if (data.length === 0) {
+      $summary.appendChild(<div>Calculating ...</div>)
+    } else {
+      if (this.sort === SORT_ASCENDING) {
+        data.sort((a, b) => a.value - b.value)
+      } else if (this.sort === SORT_DESCENDING) {
+        data.sort((a, b) => b.value - a.value)
+      }
+      for (let i = 0; i < data.length; i++) {
+        const info = data[i]
+        $summary.appendChild(
+          <div class="pad-bottom">
+            {info.label}
+            <div class={`right value-${this.key}`}>{decimal(info.value)}%</div>
+          </div>
+        )
+      }
+    }
+    this.$summary.replaceWith($summary)
+    this.$summary = $summary
+  }
+
+  reset() {
+    this.dirty = true
+    this.max = 0
+    this.methods = {}
+  }
+
+  setDimensions() {
+    if (!IN_BROWSER) {
+      return
+    }
+    let width = this.$root.offsetWidth - this.$summary.offsetWidth
+    if (width < 200) {
+      width = 200
+    }
+    if (width === this.width) {
+      return
+    }
+    this.$graph.setAttribute("height", `${this.height}`)
+    this.$graph.setAttribute("width", `${width}`)
+    this.$graph.setAttribute("viewBox", `0 0 ${width} ${this.height}`)
+    this.width = width
+    this.markDirty()
+  }
+
+  setupUI() {
+    const $downloadPNG = (
+      <div class="action">
+        <img src="download.svg" alt="Download" />
+        <span>Download PNG</span>
+      </div>
+    )
+    $downloadPNG.addEventListener("click", () => this.downloadGraph("png"))
+    const $downloadSVG = (
+      <div class="action">
+        <img src="svg.svg" alt="svg" />
+        <span>Download SVG</span>
+      </div>
+    )
+    $downloadSVG.addEventListener("click", () => this.downloadGraph("svg"))
+    const $graph = document.createElementNS(SVG, "svg")
+    $graph.addEventListener("mousemove", (e: MouseEvent) => this.renderInfo(e))
+    $graph.addEventListener("mouseout", () => this.hideInfo())
+    $graph.setAttribute("preserveAspectRatio", "none")
+    $graph.setAttribute("viewBox", `0 0 ${this.width} ${this.height}`)
+    const $info = <div class="info"></div>
+    const $summary = <div class="summary"></div>
+    const $content = (
+      <div class="content">
+        <div class="graph-holder">
+          {$info}
+          {$summary}
+          <div class="graph">{$graph}</div>
+        </div>
+        <div class="clear"></div>
+      </div>
+    )
+    const $root = (
+      <div class="simulation">
+        <div class="heading">Comparison of % {this.label}</div>
+        {$downloadSVG}
+        {$downloadPNG}
+        <div class="clear"></div>
+        {$content}
+      </div>
+    )
+    this.$graph = $graph
+    this.$info = $info
+    this.$root = $root
+    this.$summary = $summary
+    return $root
+  }
+
+  update(method: number, info?: BoxPlot) {
+    this.dirty = true
+    if (info) {
+      if (info.max > this.max) {
+        this.max = info.max
+      }
+      this.methods[method] = info
+    } else {
+      delete this.methods[method]
+    }
   }
 }
 
@@ -399,18 +769,21 @@ class ConfigValidator {
 
 class Controller {
   cfg: Config
+  cmps: Comparison[]
   definition: string
   handle: number
   paused: boolean
   rand: number
-  range: SummaryRange
   sims: Record<number, Simulation>
   simList: Simulation[]
   $main: HTMLElement
 
   constructor() {
     const cfg = defaultConfig()
+    cfg.runsMax = 1
+    cfg.runsMin = 1
     this.cfg = cfg
+    this.cmps = []
     this.definition = defaultConfigDefinition()
     this.rand = 1591652858676
     this.paused = false
@@ -418,21 +791,7 @@ class Controller {
     this.sims = {}
   }
 
-  initBrowser() {
-    this.$main = $("main")
-    this.initSims(METHODS, true)
-    this.setDimensions()
-    this.run()
-    this.redraw()
-  }
-
-  initNodeJS(method: number) {
-    const cfg = this.cfg
-    this.initSims([method], false)
-    this.run()
-  }
-
-  initSims(methods: number[], setupUI: boolean) {
+  init(methods: number[], setupUI: boolean) {
     for (let i = 0; i < methods.length; i++) {
       const method = methods[i]
       const sim = new Simulation(this, method)
@@ -442,6 +801,41 @@ class Controller {
       this.simList.push(sim)
       this.sims[method] = sim
     }
+    const healthy = new Comparison(this, "healthy", "Healthy", SORT_DESCENDING)
+    const isolated = new Comparison(
+      this,
+      "isolated",
+      "Isolated",
+      SORT_ASCENDING
+    )
+    const infected = new Comparison(
+      this,
+      "infected",
+      "Infected",
+      SORT_ASCENDING
+    )
+    if (setupUI) {
+      this.$main.appendChild(healthy.setupUI())
+      this.$main.appendChild(isolated.setupUI())
+      this.$main.appendChild(infected.setupUI())
+    }
+    this.cmps.push(healthy)
+    this.cmps.push(isolated)
+    this.cmps.push(infected)
+  }
+
+  initBrowser() {
+    this.$main = $("main")
+    this.init(METHODS, true)
+    this.setDimensions()
+    this.run()
+    this.redraw()
+  }
+
+  initNodeJS(method: number) {
+    const cfg = this.cfg
+    this.init([method], false)
+    this.run()
   }
 
   pause() {
@@ -459,6 +853,9 @@ class Controller {
       for (let i = 0; i < this.simList.length; i++) {
         this.simList[i].render()
       }
+      for (let i = 0; i < this.cmps.length; i++) {
+        this.cmps[i].render()
+      }
     }
     this.handle = 0
   }
@@ -473,18 +870,20 @@ class Controller {
     this.handle = requestAnimationFrame(() => this.redraw())
   }
 
+  resetComparison() {
+    for (let i = 0; i < this.cmps.length; i++) {
+      this.cmps[i].reset()
+    }
+    this.requestRedraw()
+  }
+
   resume() {
     this.paused = false
     this.requestRedraw()
   }
 
   run() {
-    this.range = {
-      dead: {max: -1, min: -1},
-      healthy: {max: -1, min: -1},
-      infected: {max: -1, min: -1},
-      isolated: {max: -1, min: -1},
-    }
+    this.resetComparison()
     for (let i = 0; i < this.simList.length; i++) {
       const sim = this.simList[i]
       if (!sim.hidden) {
@@ -507,14 +906,23 @@ class Controller {
     for (let i = 0; i < this.simList.length; i++) {
       this.simList[i].setDimensions()
     }
+    for (let i = 0; i < this.cmps.length; i++) {
+      this.cmps[i].setDimensions()
+    }
   }
 
-  updateRange(summary: Summary) {
-    const range = this.range
-    updateMinMax(range.dead, summary.dead)
-    updateMinMax(range.healthy, summary.healthy)
-    updateMinMax(range.infected, summary.infected)
-    updateMinMax(range.isolated, summary.isolated)
+  updateComparison(method: number, info?: SummaryBoxPlot) {
+    if (info) {
+      for (let i = 0; i < this.cmps.length; i++) {
+        const cmp = this.cmps[i]
+        cmp.update(method, info[cmp.key])
+      }
+    } else {
+      for (let i = 0; i < this.cmps.length; i++) {
+        this.cmps[i].update(method)
+      }
+    }
+    this.requestRedraw()
   }
 }
 
@@ -1638,7 +2046,6 @@ class Simulation {
   variance: number
   width: number
   worker?: AbstractedWorker
-  $boxplots: HTMLElement
   $content: HTMLElement
   $download: HTMLElement
   $info: HTMLElement
@@ -1675,15 +2082,21 @@ class Simulation {
   }
 
   computeBoxPlots() {
+    const dead = []
     const healthy = []
+    const infected = []
     const isolated = []
     for (let i = 0; i < this.summaries.length; i++) {
       const summary = this.summaries[i]
+      dead.push(summary.dead)
       healthy.push(summary.healthy)
+      infected.push(summary.infected)
       isolated.push(summary.isolated)
     }
     return {
+      dead: computeBoxPlot(dead),
       healthy: computeBoxPlot(healthy),
+      infected: computeBoxPlot(infected),
       isolated: computeBoxPlot(isolated),
     }
   }
@@ -1816,77 +2229,6 @@ class Simulation {
     img.src = url
   }
 
-  generateBoxPlot(info: BoxPlot) {
-    const height = 100
-    const hpad1 = Math.floor(0.3 * height)
-    const hpad2 = Math.floor(0.2 * height)
-    const mid = Math.floor(height / 2)
-    const padding = 60
-    const width = this.width
-    const pct = (width - 2 * padding) / 100
-    const img = document.createElementNS(SVG, "svg")
-    img.setAttribute("height", `${height}`)
-    img.setAttribute("preserveAspectRatio", "none")
-    img.setAttribute("viewBox", `0 0 ${width} ${height}`)
-    img.setAttribute("width", `${width}`)
-    const min = padding + Math.floor(pct * info.min)
-    addNode(img, "rect", {
-      fill: "#000000",
-      height: height - (2 * hpad1),
-      width: 2,
-      x: min,
-      y: hpad1,
-    })
-    const max = padding + Math.ceil(pct * info.max)
-    addNode(img, "rect", {
-      fill: "#000000",
-      height: height - (2 * hpad1),
-      width: 2,
-      x: max,
-      y: hpad1,
-    })
-    const median = padding + Math.floor(pct * info.median)
-    const q1 = padding + Math.floor(pct * info.q1)
-    const q3 = padding + Math.ceil(pct * info.q3)
-    addNode(img, "line", {
-      stroke: "#000000",
-      "stroke-dasharray": "4 1",
-      x1: min,
-      x2: q1,
-      y1: mid,
-      y2: mid,
-    })
-    addNode(img, "line", {
-      stroke: "#000000",
-      "stroke-dasharray": "4 1",
-      x1: q3,
-      x2: max,
-      y1: mid,
-      y2: mid,
-    })
-    addNode(img, "rect", {
-      fill: "#ffffff",
-      height: height - (2 * hpad2),
-      stroke: "#000000",
-      "stroke-width": 1,
-      width: q3 - q1,
-      x: q1,
-      y: hpad2,
-    })
-    addNode(img, "rect", {
-      fill: "#000000",
-      height: height - (2 * hpad2),
-      width: 2,
-      x: median,
-      y: hpad2,
-    })
-    addNode(img, "text", {
-      x: max + 10,
-      y: height / 2 + 7,
-    }).innerHTML = `${decimal(info.max)}%`
-    return img
-  }
-
   generateGraph($graph: SVGElement, results: Stats[]) {
     const height = this.cfg.population
     const width = this.cfg.days
@@ -1968,11 +2310,11 @@ class Simulation {
     this.results.push(resp.stats)
     if (this.results.length === this.cfg.days) {
       const summary = getSummary(this.results, this.summaries.length, this.rand)
-      this.ctrl.updateRange(summary)
       this.runs.push(this.results)
       this.runsUpdate = true
       this.summaries.push(summary)
       this.summaries.sort((a, b) => b.healthy - a.healthy)
+      this.ctrl.updateComparison(this.method, this.computeBoxPlots())
       const runs = this.summaries.length
       if (runs === this.cfg.runsMax) {
         this.runsFinished = true
@@ -2035,6 +2377,10 @@ class Simulation {
   }
 
   hideInfo() {
+    if (this.handle) {
+      clearTimeout(this.handle)
+      this.handle = undefined
+    }
     hide(this.$info)
   }
 
@@ -2045,9 +2391,6 @@ class Simulation {
     this.runsUpdate = true
     this.summariesShown = false
     this.$summariesLink.innerHTML = "Show All"
-    if (this.$boxplots.classList.contains("summaries-shown")) {
-      this.$boxplots.classList.remove("summaries-shown")
-    }
     hide(this.$summaries)
     this.markDirty()
   }
@@ -2060,6 +2403,7 @@ class Simulation {
   randomise() {
     const rand = Date.now()
     console.log(`Using random seed: ${rand}`)
+    this.ctrl.updateComparison(this.method)
     this.run(this.cfg, this.definition, rand)
   }
 
@@ -2075,72 +2419,6 @@ class Simulation {
     this.renderSummary(results)
     this.renderGraph(results)
     this.renderRuns()
-  }
-
-  renderBoxPlot(info: BoxPlot, label: string, style: string) {
-    if (isNaN(info.q1)) {
-      info = {
-        median: 20.0223,
-        q1: 14,
-        q3: 40,
-        min: 1,
-        max: 70,
-      }
-    }
-    const $img = <div class="boxplot-image">{this.generateBoxPlot(info)}</div>
-    const $info = (
-      <div>
-        <div>
-          Minimum<div class="right value">{decimal(info.min)}%</div>
-        </div>
-        <div>
-          1<sup>st</sup> Quartile
-          <div class="right value">{decimal(info.q1)}%</div>
-        </div>
-        <div>
-          3<sup>rd</sup> Quartile
-          <div class="right value">{decimal(info.q3)}%</div>
-        </div>
-        <div>
-          Maximum<div class="right value">{decimal(info.max)}%</div>
-        </div>
-      </div>
-    )
-    let handle: ReturnType<typeof setTimeout>
-    $img.addEventListener("mousemove", () => {
-      show($info)
-      if (handle) {
-        clearTimeout(handle)
-      }
-      handle = setTimeout(() => hide($info), 1200)
-    })
-    $img.addEventListener("mouseout", () => {
-      if (handle) {
-        clearTimeout(handle)
-      }
-      hide($info)
-    })
-    hide($info)
-    this.$boxplots.appendChild(
-      <div class="boxplot">
-        <div class="boxplot-info">
-          <div class={style}>
-            {label}
-            <div class={`right ${style}`}>{decimal(info.median)}%</div>
-          </div>
-          {$info}
-        </div>
-        {$img}
-      </div>
-    )
-  }
-
-  renderBoxPlots() {
-    const info = this.computeBoxPlots()
-    this.$boxplots.innerHTML = ""
-    this.renderBoxPlot(info.healthy, "Healthy", "value-healthy")
-    this.renderBoxPlot(info.isolated, "Isolated", "value-dead")
-    show(this.$boxplots)
   }
 
   renderGraph(results: Stats[]) {
@@ -2323,9 +2601,6 @@ class Simulation {
     }
     this.$tbody.replaceWith($tbody)
     this.$tbody = $tbody
-    if (runs >= 5) {
-      this.renderBoxPlots()
-    }
   }
 
   renderSummary(results: Stats[]) {
@@ -2388,7 +2663,6 @@ class Simulation {
     this.worker.onMessage((msg: WorkerResponse) => this.handleMessage(msg))
     this.worker.postMessage({definition, method: this.method, rand})
     this.markDirty()
-    hide(this.$boxplots)
     hide(this.$download)
   }
 
@@ -2415,11 +2689,10 @@ class Simulation {
 
   setupUI() {
     this.handleToggle = (e: Event) => this.toggle(e)
-    const $boxplots = <div class="boxplots"></div>
     const $download = (
       <div class="action">
         <img src="download.svg" alt="Download" />
-        <span>Download Data</span>
+        <span>Download PNG</span>
       </div>
     )
     $download.addEventListener("click", () => this.downloadGraph("png"))
@@ -2499,8 +2772,6 @@ class Simulation {
         </div>
         <div class="clear"></div>
         {$summaries}
-        {$boxplots}
-        <div class="clear"></div>
       </div>
     )
     const $root = (
@@ -2514,7 +2785,6 @@ class Simulation {
         {$content}
       </div>
     )
-    this.$boxplots = $boxplots
     this.$content = $content
     this.$download = $download
     this.$graph = $graph
@@ -2559,9 +2829,6 @@ class Simulation {
     this.runsUpdate = true
     this.summariesShown = true
     this.$summariesLink.innerHTML = "Hide All"
-    if (!this.$boxplots.classList.contains("summaries-shown")) {
-      this.$boxplots.classList.add("summaries-shown")
-    }
     show(this.$summaries)
     this.markDirty()
   }
@@ -2653,6 +2920,9 @@ function computeBoxPlot(values: number[]) {
       break
     }
   }
+  if (min > q1) {
+    min = q1
+  }
   for (let i = values.length - 1; i >= 0; i--) {
     const v = values[i]
     if (v <= max) {
@@ -2660,12 +2930,16 @@ function computeBoxPlot(values: number[]) {
       break
     }
   }
+  if (max < q3) {
+    max = q3
+  }
   return {
     max,
     median: quantile(values, 0.5),
     min,
     q1,
     q3,
+    size: values.length,
   }
 }
 
@@ -2721,7 +2995,7 @@ function defaultConfig(): Config {
     // likelihood of a notified person self-isolating
     isolationLikelihood: 0.9,
     // likelihood of an isolated person staying at home for any given period during lockdown
-    isolationLockdown: 0.95,
+    isolationLockdown: 0.9,
     // the SafetyScore level below which one is notified to self-isolate and test
     isolationThreshold: 50,
     // likelihood of a symptomatic individual self-isolating
@@ -2733,7 +3007,7 @@ function defaultConfig(): Config {
     // number of days the number of infected people must be below "lockdownEnd" before lockdown ends
     lockdownEndWindow: 14,
     // the number of infected people which will trigger a lockdown
-    lockdownStart: 15,
+    lockdownStart: 7,
     // total number of people
     population: 10000,
     // number of days before becoming infectious
@@ -2765,7 +3039,7 @@ function defaultConfig(): Config {
     // test all key workers
     testKeyWorkers: false,
     // likelihood of a key worker getting tested
-    testKeyWorker: 0.1,
+    testKeyWorker: 1,
     // likelihood of a person getting themselves tested if notified
     testNotified: 0.9,
     // likelihood of a person getting themselves tested if symptomatic
@@ -3203,20 +3477,6 @@ function updateConfig(e?: Event) {
   $("overlay").style.display = "none"
   ctrl.resume()
   ctrl.runNew(cfg, definition)
-}
-
-function updateMinMax(m: MinMax, v: number) {
-  if (m.max === -1) {
-    m.max = v
-    m.min = v
-  } else {
-    if (v > m.max) {
-      m.max = v
-    }
-    if (v < m.min) {
-      m.min = v
-    }
-  }
 }
 
 function updateMirror(src: string) {
