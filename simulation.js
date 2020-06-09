@@ -27,7 +27,7 @@ var __read = (this && this.__read) || function (o, n) {
     }
     return ar;
 };
-var _a;
+var _a, _b;
 // Determine host environment.
 var IN_BROWSER = typeof self === "object";
 var IN_WORKER = typeof importScripts === "function";
@@ -46,13 +46,20 @@ var METHOD_APPLE_GOOGLE = 1;
 var METHOD_FREE_MOVEMENT = 2;
 var METHOD_LOCKDOWN = 3;
 var METHOD_SAFETYSCORE = 4;
-// Short method labels for use in graphs.
-var METHOD_LABELS = (_a = {},
-    _a[METHOD_APPLE_GOOGLE] = "Apple/Google",
-    _a[METHOD_FREE_MOVEMENT] = "Free Movement",
-    _a[METHOD_LOCKDOWN] = "Lockdown",
-    _a[METHOD_SAFETYSCORE] = "SafetyScore",
+// Method colours for use in graphs.
+var METHOD_COLOURS = (_a = {},
+    _a[METHOD_APPLE_GOOGLE] = COLOUR_INFECTED,
+    _a[METHOD_FREE_MOVEMENT] = COLOUR_HEALTHY,
+    _a[METHOD_LOCKDOWN] = "#444444",
+    _a[METHOD_SAFETYSCORE] = COLOUR_RECOVERED,
     _a);
+// Short method labels for use in graphs.
+var METHOD_LABELS = (_b = {},
+    _b[METHOD_APPLE_GOOGLE] = "Apple/Google",
+    _b[METHOD_FREE_MOVEMENT] = "Free Movement",
+    _b[METHOD_LOCKDOWN] = "Lockdown",
+    _b[METHOD_SAFETYSCORE] = "SafetyScore",
+    _b);
 // Attribute values for people.
 var PERSON_APP_FOREIGN_CLUSTER = 1;
 var PERSON_APP_INSTALLED = 2;
@@ -113,15 +120,202 @@ var AbstractedWorker = /** @class */ (function () {
     };
     return AbstractedWorker;
 }());
+var BarChart = /** @class */ (function () {
+    function BarChart(ctrl) {
+        this.ctrl = ctrl;
+        this.data = {};
+        this.dirty = true;
+        this.height = 300;
+        this.labelHeight = 40;
+        this.padLabel = 25;
+        this.padLeft = 60;
+        this.padTop = 25;
+        this.top = this.height - this.labelHeight + 1;
+        this.inner = this.top - this.padTop;
+        this.width = 0;
+    }
+    BarChart.prototype.drawBars = function ($graph, font, key, label, midX) {
+        // Draw the X-axis label.
+        addNode($graph, "text", {
+            "alignment-baseline": "middle",
+            "font-family": font,
+            "font-size": "12px",
+            "text-anchor": "middle",
+            x: midX,
+            y: this.height - this.labelHeight + this.padLabel,
+        }).innerHTML = label;
+        // Draw the bars for the different methods.
+        var start = midX - 160;
+        for (var i = 0; i < METHODS.length; i++) {
+            var method = METHODS[i];
+            var data = this.data[method];
+            if (typeof data === "undefined") {
+                continue;
+            }
+            var median = data[key].median;
+            var height = Math.round((median / 100) * this.inner);
+            var posX = start + i * 80;
+            var posY = this.top - height;
+            addNode($graph, "rect", {
+                fill: METHOD_COLOURS[method],
+                height: height,
+                width: 50,
+                x: posX,
+                y: posY,
+            });
+            addNode($graph, "text", {
+                "alignment-baseline": "middle",
+                "font-family": font,
+                "font-size": "11px",
+                "text-anchor": "middle",
+                x: posX + 25,
+                y: posY - 12,
+            }).innerHTML = METHOD_LABELS[method];
+        }
+    };
+    BarChart.prototype.downloadGraph = function (format) {
+        var filename = this.getFilename(format);
+        var height = this.height;
+        var width = 840;
+        var graph = document.createElementNS(SVG, "svg");
+        graph.setAttribute("height", "100%");
+        graph.setAttribute("viewBox", "0 0 " + width + " " + height);
+        graph.setAttribute("width", "100%");
+        this.generateGraph(graph, height, width);
+        var svg = new XMLSerializer().serializeToString(graph);
+        downloadImage({ filename: filename, format: format, height: height, svg: svg, width: width });
+    };
+    BarChart.prototype.generateGraph = function ($graph, height, width) {
+        addNode($graph, "rect", {
+            fill: "#fff",
+            height: height,
+            width: width,
+            x: 0,
+            y: 0,
+        });
+        var font = this.ctrl.cfg.imageFont;
+        var midX = Math.floor((width - this.padLeft) / 4);
+        var segment = midX * 2;
+        var ventile = (height - this.labelHeight - this.padTop) / 5;
+        // Draw the Y-axis labels.
+        var posY = this.padTop;
+        for (var i = 5; i >= 0; i--) {
+            addNode($graph, "text", {
+                "alignment-baseline": "middle",
+                "font-family": font,
+                "font-size": "12px",
+                "text-anchor": "end",
+                x: 40,
+                y: posY + 2,
+            }).innerHTML = "" + i * 20;
+            addNode($graph, "rect", {
+                x: 48,
+                y: posY,
+                width: 5,
+                height: 1,
+            });
+            posY += ventile;
+        }
+        // Draw the Y-axis line.
+        posY = posY - ventile + 1;
+        addNode($graph, "rect", {
+            x: 53,
+            y: this.padTop,
+            width: 1,
+            height: posY - this.padTop,
+        });
+        // Draw the info on healthy.
+        this.drawBars($graph, font, "healthy", "Healthy", midX + this.padLeft);
+        // Draw the info on isolated.
+        this.drawBars($graph, font, "isolated", "Isolated", segment + midX + this.padLeft);
+    };
+    BarChart.prototype.getFilename = function (ext) {
+        return "simulation-overview-" + Date.now() + "." + ext;
+    };
+    BarChart.prototype.markDirty = function () {
+        this.dirty = true;
+        this.ctrl.requestRedraw();
+    };
+    BarChart.prototype.render = function () {
+        if (overlayShown || !this.dirty) {
+            return;
+        }
+        this.dirty = false;
+        this.renderGraph();
+    };
+    BarChart.prototype.renderGraph = function () {
+        var $graph = this.$graph;
+        $graph.innerHTML = "";
+        this.generateGraph($graph, this.height, this.width);
+    };
+    BarChart.prototype.setDimensions = function () {
+        if (!IN_BROWSER) {
+            return;
+        }
+        var width = this.$root.offsetWidth;
+        if (width < 800) {
+            width = 800;
+        }
+        var buffer = 238;
+        if (width > 800 + 238) {
+            this.$content.style.paddingLeft = buffer + "px";
+            width -= buffer;
+        }
+        else {
+            this.$content.style.paddingLeft = "0px";
+        }
+        this.$graph.setAttribute("viewBox", "0 0 " + width + " " + this.height);
+        this.width = width;
+        this.markDirty();
+    };
+    BarChart.prototype.setupUI = function () {
+        var _this = this;
+        var $downloadPNG = (h("div", { class: "action" },
+            h("img", { src: "download.svg", alt: "Download" }),
+            h("span", null, "Download PNG")));
+        $downloadPNG.addEventListener("click", function () { return _this.downloadGraph("png"); });
+        var $downloadSVG = (h("div", { class: "action" },
+            h("img", { src: "svg.svg", alt: "svg" }),
+            h("span", null, "Download SVG")));
+        $downloadSVG.addEventListener("click", function () { return _this.downloadGraph("svg"); });
+        var $graph = document.createElementNS(SVG, "svg");
+        $graph.setAttribute("height", "" + this.height);
+        $graph.setAttribute("preserveAspectRatio", "none");
+        $graph.setAttribute("viewBox", "0 0 " + this.width + " " + this.height);
+        $graph.setAttribute("width", "100%");
+        var $content = h("div", { class: "content" }, $graph);
+        var $root = (h("div", { class: "simulation" },
+            h("div", { class: "heading" }),
+            $downloadSVG,
+            $downloadPNG,
+            h("div", { class: "clear" }),
+            $content,
+            h("div", { class: "clear" })));
+        this.$content = $content;
+        this.$graph = $graph;
+        this.$root = $root;
+        return $root;
+    };
+    BarChart.prototype.update = function (method, info) {
+        this.dirty = true;
+        if (info) {
+            this.data[method] = info;
+        }
+        else {
+            delete this.data[method];
+        }
+    };
+    return BarChart;
+}());
 var Comparison = /** @class */ (function () {
     function Comparison(ctrl, key, label, sort) {
         this.ctrl = ctrl;
+        this.data = {};
         this.dirty = false;
         this.height = 300;
         this.key = key;
         this.label = label;
         this.max = 0;
-        this.methods = {};
         this.sort = sort;
         this.width = 0;
     }
@@ -188,7 +382,7 @@ var Comparison = /** @class */ (function () {
         var y = top - padTop;
         for (var i = 0; i < METHODS.length; i++) {
             var method = METHODS[i];
-            var box = this.methods[method];
+            var box = this.data[method];
             if (typeof box === "undefined") {
                 continue;
             }
@@ -290,7 +484,7 @@ var Comparison = /** @class */ (function () {
             clearTimeout(this.handle);
             this.handle = undefined;
         }
-        var box = this.methods[method];
+        var box = this.data[method];
         if (typeof box === "undefined") {
             this.hideInfo();
             return;
@@ -337,7 +531,7 @@ var Comparison = /** @class */ (function () {
         var data = [];
         for (var i = 0; i < METHODS.length; i++) {
             var method = METHODS[i];
-            var box = this.methods[method];
+            var box = this.data[method];
             if (typeof box === "undefined") {
                 continue;
             }
@@ -366,9 +560,9 @@ var Comparison = /** @class */ (function () {
         this.$summary = $summary;
     };
     Comparison.prototype.reset = function () {
+        this.data = {};
         this.dirty = true;
         this.max = 0;
-        this.methods = {};
     };
     Comparison.prototype.setDimensions = function () {
         if (!IN_BROWSER) {
@@ -430,10 +624,10 @@ var Comparison = /** @class */ (function () {
             if (info.max > this.max) {
                 this.max = info.max;
             }
-            this.methods[method] = info;
+            this.data[method] = info;
         }
         else {
-            delete this.methods[method];
+            delete this.data[method];
         }
     };
     return Comparison;
@@ -556,14 +750,17 @@ var Controller = /** @class */ (function () {
             this.simList.push(sim);
             this.sims[method] = sim;
         }
+        var barchart = new BarChart(this);
         var healthy = new Comparison(this, "healthy", "Healthy", SORT_DESCENDING);
         var isolated = new Comparison(this, "isolated", "Isolated", SORT_ASCENDING);
         var infected = new Comparison(this, "infected", "Infected", SORT_ASCENDING);
         if (setupUI) {
+            this.$main.appendChild(barchart.setupUI());
             this.$main.appendChild(healthy.setupUI());
             this.$main.appendChild(isolated.setupUI());
             this.$main.appendChild(infected.setupUI());
         }
+        this.barchart = barchart;
         this.cmps.push(healthy);
         this.cmps.push(isolated);
         this.cmps.push(infected);
@@ -597,6 +794,7 @@ var Controller = /** @class */ (function () {
                 this.cmps[i].render();
             }
         }
+        this.barchart.render();
         this.handle = 0;
     };
     Controller.prototype.requestRedraw = function () {
@@ -644,6 +842,7 @@ var Controller = /** @class */ (function () {
         for (var i = 0; i < this.cmps.length; i++) {
             this.cmps[i].setDimensions();
         }
+        this.barchart.setDimensions();
     };
     Controller.prototype.updateComparison = function (method, info) {
         if (info) {
@@ -657,6 +856,7 @@ var Controller = /** @class */ (function () {
                 this.cmps[i].update(method);
             }
         }
+        this.barchart.update(method, info);
         this.requestRedraw();
     };
     return Controller;
