@@ -471,6 +471,11 @@ class BarChart {
     this.generateGraph($graph, this.height, this.width)
   }
 
+  reset() {
+    this.data = {}
+    this.dirty = true
+  }
+
   setDimensions() {
     if (!IN_BROWSER) {
       return
@@ -1105,6 +1110,7 @@ class Controller {
   }
 
   resetComparison() {
+    this.barchart.reset()
     for (let i = 0; i < this.cmps.length; i++) {
       this.cmps[i].reset()
     }
