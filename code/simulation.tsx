@@ -23,6 +23,14 @@ const METHOD_FREE_MOVEMENT = 2
 const METHOD_LOCKDOWN = 3
 const METHOD_SAFETYSCORE = 4
 
+// Method colours for use in graphs.
+const METHOD_COLOURS: Record<number, string> = {
+  [METHOD_APPLE_GOOGLE]: COLOUR_INFECTED,
+  [METHOD_FREE_MOVEMENT]: COLOUR_HEALTHY,
+  [METHOD_LOCKDOWN]: "#444444",
+  [METHOD_SAFETYSCORE]: COLOUR_RECOVERED,
+}
+
 // Short method labels for use in graphs.
 const METHOD_LABELS: Record<number, string> = {
   [METHOD_APPLE_GOOGLE]: "Apple/Google",
@@ -300,18 +308,255 @@ class AbstractedWorker {
   }
 }
 
+class BarChart {
+  ctrl: Controller
+  data: Record<number, SummaryBoxPlot>
+  dirty: boolean
+  height: number
+  inner: number
+  labelHeight: number
+  legendWidth: number
+  padLabel: number
+  padLeft: number
+  padTop: number
+  top: number
+  width: number
+  $graph: SVGElement
+  $root: HTMLElement
+
+  constructor(ctrl: Controller) {
+    this.ctrl = ctrl
+    this.data = {}
+    this.dirty = true
+    this.height = 300
+    this.labelHeight = 35
+    this.legendWidth = 150
+    this.padLabel = 25
+    this.padLeft = 60
+    this.padTop = 25
+    this.top = this.height - this.labelHeight + 1
+    this.inner = this.top - this.padTop
+    this.width = 0
+  }
+
+  drawBars(
+    $graph: SVGElement,
+    font: string,
+    key: keyof SummaryBoxPlot,
+    label: string,
+    midX: number
+  ) {
+    // Draw the X-axis label.
+    addNode($graph, "text", {
+      "alignment-baseline": "middle",
+      "font-family": font,
+      "font-size": "12px",
+      "text-anchor": "middle",
+      x: midX,
+      y: this.height - this.labelHeight + this.padLabel,
+    }).innerHTML = label
+    // Draw the bars for the different methods.
+    const start = midX - 90
+    for (let i = 0; i < METHODS.length; i++) {
+      const method = METHODS[i]
+      const data = this.data[method]
+      if (typeof data === "undefined") {
+        continue
+      }
+      const median = data[key].median
+      const height = Math.round((median / 100) * this.inner)
+      addNode($graph, "rect", {
+        fill: METHOD_COLOURS[method],
+        height: height,
+        width: 30,
+        x: start + i * 50,
+        y: this.top - height,
+      })
+    }
+  }
+
+  drawLegend($graph: SVGElement, font: string, idx: number, method: number) {
+    const posX = this.width - this.legendWidth
+    const posY = this.top - 21 - (30 * (METHODS.length - idx - 1))
+    addNode($graph, "rect", {
+      fill: METHOD_COLOURS[method],
+      height: 20,
+      width: 20,
+      x: posX,
+      y: posY,
+    })
+    addNode($graph, "text", {
+      "alignment-baseline": "middle",
+      "font-family": font,
+      "font-size": "12px",
+      x: posX + 30,
+      y: posY + 10,
+    }).innerHTML = METHOD_LABELS[method]
+}
+
+  downloadGraph(format: string) {
+    const filename = this.getFilename(format)
+    const height = this.height
+    const width = 840
+    const graph = document.createElementNS(SVG, "svg")
+    graph.setAttribute("height", "100%")
+    graph.setAttribute("viewBox", `0 0 ${width} ${height}`)
+    graph.setAttribute("width", "100%")
+    this.generateGraph(graph, height, width)
+    const svg = new XMLSerializer().serializeToString(graph)
+    downloadImage({filename, format, height, svg, width})
+  }
+
+  generateGraph($graph: SVGElement, height: number, width: number) {
+    addNode($graph, "rect", {
+      fill: "#fff",
+      height: height,
+      width: width,
+      x: 0,
+      y: 0,
+    })
+    const font = this.ctrl.cfg.imageFont
+    const midX = Math.floor((width - this.padLeft - this.legendWidth) / 4)
+    const segment = midX * 2
+    const ventile = (height - this.labelHeight - this.padTop) / 5
+    // Draw the Y-axis labels.
+    let posY = this.padTop
+    for (let i = 5; i >= 0; i--) {
+      addNode($graph, "text", {
+        "alignment-baseline": "middle",
+        "font-family": font,
+        "font-size": "12px",
+        "text-anchor": "end",
+        x: 40,
+        y: posY + 2,
+      }).innerHTML = `${i * 20}`
+      addNode($graph, "rect", {
+        x: 48,
+        y: posY,
+        width: 5,
+        height: 1,
+      })
+      posY += ventile
+    }
+    // Draw the Y-axis line.
+    posY = posY - ventile + 1
+    addNode($graph, "rect", {
+      x: 53,
+      y: this.padTop,
+      width: 1,
+      height: posY - this.padTop,
+    })
+    // Draw the info on healthy.
+    this.drawBars($graph, font, "healthy", "Healthy", midX + this.padLeft)
+    // Draw the info on isolated.
+    this.drawBars(
+      $graph,
+      font,
+      "isolated",
+      "Isolated",
+      segment + midX + this.padLeft
+    )
+    // Draw the legend for the methods.
+    for (let i = 0; i < METHODS.length; i++) {
+      this.drawLegend($graph, font, i, METHODS[i])
+    }
+  }
+
+  getFilename(ext: string) {
+    return `simulation-overview-${Date.now()}.${ext}`
+  }
+
+  markDirty() {
+    this.dirty = true
+    this.ctrl.requestRedraw()
+  }
+
+  render() {
+    if (overlayShown || !this.dirty) {
+      return
+    }
+    this.dirty = false
+    this.renderGraph()
+  }
+
+  renderGraph() {
+    const $graph = this.$graph
+    $graph.innerHTML = ""
+    this.generateGraph($graph, this.height, this.width)
+  }
+
+  setDimensions() {
+    if (!IN_BROWSER) {
+      return
+    }
+    let width = this.$root.offsetWidth
+    if (width < 800) {
+      width = 800
+    }
+    if (width === this.width) {
+      return
+    }
+    this.$graph.setAttribute("viewBox", `0 0 ${width} ${this.height}`)
+    this.width = width
+    this.markDirty()
+  }
+
+  setupUI() {
+    const $downloadPNG = (
+      <div class="action">
+        <img src="download.svg" alt="Download" />
+        <span>Download PNG</span>
+      </div>
+    )
+    $downloadPNG.addEventListener("click", () => this.downloadGraph("png"))
+    const $downloadSVG = (
+      <div class="action">
+        <img src="svg.svg" alt="svg" />
+        <span>Download SVG</span>
+      </div>
+    )
+    $downloadSVG.addEventListener("click", () => this.downloadGraph("svg"))
+    const $graph = document.createElementNS(SVG, "svg")
+    $graph.setAttribute("height", `${this.height}`)
+    $graph.setAttribute("preserveAspectRatio", "none")
+    $graph.setAttribute("viewBox", `0 0 ${this.width} ${this.height}`)
+    $graph.setAttribute("width", "100%")
+    const $root = (
+      <div class="simulation">
+        <div class="heading">Results</div>
+        {$downloadSVG}
+        {$downloadPNG}
+        <div class="clear"></div>
+        <div class="content">{$graph}</div>
+        <div class="clear"></div>
+      </div>
+    )
+    this.$graph = $graph
+    this.$root = $root
+    return $root
+  }
+
+  update(method: number, info?: SummaryBoxPlot) {
+    this.dirty = true
+    if (info) {
+      this.data[method] = info
+    } else {
+      delete this.data[method]
+    }
+  }
+}
+
 class Comparison {
   ctrl: Controller
+  data: Record<number, BoxPlot>
   dirty: boolean
   handle?: ReturnType<typeof setTimeout>
   height: number
   key: keyof SummaryBoxPlot
   label: string
   max: number
-  methods: Record<number, BoxPlot>
   sort: number
   width: number
-  $download: HTMLElement
   $graph: SVGElement
   $info: HTMLElement
   $root: HTMLElement
@@ -324,12 +569,12 @@ class Comparison {
     sort: number
   ) {
     this.ctrl = ctrl
+    this.data = {}
     this.dirty = false
     this.height = 300
     this.key = key
     this.label = label
     this.max = 0
-    this.methods = {}
     this.sort = sort
     this.width = 0
   }
@@ -398,7 +643,7 @@ class Comparison {
     const y = top - padTop
     for (let i = 0; i < METHODS.length; i++) {
       const method = METHODS[i]
-      const box = this.methods[method]
+      const box = this.data[method]
       if (typeof box === "undefined") {
         continue
       }
@@ -505,7 +750,7 @@ class Comparison {
       clearTimeout(this.handle)
       this.handle = undefined
     }
-    const box = this.methods[method]
+    const box = this.data[method]
     if (typeof box === "undefined") {
       this.hideInfo()
       return
@@ -548,7 +793,7 @@ class Comparison {
     const data = []
     for (let i = 0; i < METHODS.length; i++) {
       const method = METHODS[i]
-      const box = this.methods[method]
+      const box = this.data[method]
       if (typeof box === "undefined") {
         continue
       }
@@ -577,9 +822,9 @@ class Comparison {
   }
 
   reset() {
+    this.data = {}
     this.dirty = true
     this.max = 0
-    this.methods = {}
   }
 
   setDimensions() {
@@ -654,9 +899,9 @@ class Comparison {
       if (info.max > this.max) {
         this.max = info.max
       }
-      this.methods[method] = info
+      this.data[method] = info
     } else {
-      delete this.methods[method]
+      delete this.data[method]
     }
   }
 }
@@ -768,6 +1013,7 @@ class ConfigValidator {
 }
 
 class Controller {
+  barchart: BarChart
   cfg: Config
   cmps: Comparison[]
   definition: string
@@ -801,6 +1047,7 @@ class Controller {
       this.simList.push(sim)
       this.sims[method] = sim
     }
+    const barchart = new BarChart(this)
     const healthy = new Comparison(this, "healthy", "Healthy", SORT_DESCENDING)
     const isolated = new Comparison(
       this,
@@ -815,10 +1062,12 @@ class Controller {
       SORT_ASCENDING
     )
     if (setupUI) {
+      this.$main.appendChild(barchart.setupUI())
       this.$main.appendChild(healthy.setupUI())
       this.$main.appendChild(isolated.setupUI())
       this.$main.appendChild(infected.setupUI())
     }
+    this.barchart = barchart
     this.cmps.push(healthy)
     this.cmps.push(isolated)
     this.cmps.push(infected)
@@ -857,6 +1106,7 @@ class Controller {
         this.cmps[i].render()
       }
     }
+    this.barchart.render()
     this.handle = 0
   }
 
@@ -909,6 +1159,7 @@ class Controller {
     for (let i = 0; i < this.cmps.length; i++) {
       this.cmps[i].setDimensions()
     }
+    this.barchart.setDimensions()
   }
 
   updateComparison(method: number, info?: SummaryBoxPlot) {
@@ -922,6 +1173,7 @@ class Controller {
         this.cmps[i].update(method)
       }
     }
+    this.barchart.update(method, info)
     this.requestRedraw()
   }
 }
