@@ -416,7 +416,7 @@ class Controller {
     const cfg = defaultConfig()
     this.cfg = cfg
     this.definition = defaultConfigDefinition()
-    this.rand = 1591652858672 + 4
+    this.rand = 1591652858676
     this.paused = false
     this.simList = []
     this.sims = {}
@@ -1678,13 +1678,13 @@ class Simulation {
     this.width = 0
   }
 
-  computeBoxPlots(summaries: Summary[]) {
+  computeBoxPlots() {
     const dead = []
     const healthy = []
     const infected = []
     const isolated = []
-    for (let i = 0; i < summaries.length; i++) {
-      const summary = summaries[i]
+    for (let i = 0; i < this.summaries.length; i++) {
+      const summary = this.summaries[i]
       dead.push(summary.dead)
       healthy.push(summary.healthy)
       infected.push(summary.infected)
@@ -1978,9 +1978,14 @@ class Simulation {
   }
 
   hideSummaries() {
+    if (!this.summariesShown) {
+      return
+    }
+    this.runsUpdate = true
     this.summariesShown = false
     this.$summariesLink.innerHTML = "Show All"
     hide(this.$summaries)
+    this.markDirty()
   }
 
   markDirty() {
@@ -2011,7 +2016,7 @@ class Simulation {
   renderBoxPlot(info: BoxPlot, label: string, colour: string) {}
 
   renderBoxPlots() {
-    const info = this.computeBoxPlots(this.summaries)
+    const info = this.computeBoxPlots()
     this.renderBoxPlot(info.healthy, "healthy", COLOUR_HEALTHY)
     this.renderBoxPlot(info.infected, "infected", COLOUR_INFECTED)
     this.renderBoxPlot(info.dead, "dead", COLOUR_DEAD)
@@ -2099,13 +2104,34 @@ class Simulation {
     }
     this.runsUpdate = false
     const runs = this.runs.length
+    let linkedStatus = false
     let status = ""
     if (!this.runsFinished) {
       if (!(this.cfg.runsMin === 1 && this.cfg.runsMax === 1)) {
-        status = `Run #${this.runs.length + 1}`
+        status = `Running #${this.runs.length + 1}`
+        if (this.summariesShown && this.selected !== -1) {
+          linkedStatus = true
+        }
       }
     }
-    this.$status.innerHTML = status
+    if (linkedStatus) {
+      this.$status.innerHTML = ""
+      this.$status.appendChild(
+        <a
+          href=""
+          onclick={(e: Event) => {
+            e.preventDefault()
+            if (this.selected !== -1) {
+              this.selected = -1
+            }
+            this.hideSummaries()
+          }}>
+          {status}
+        </a>
+      )
+    } else {
+      this.$status.innerHTML = status
+    }
     if (runs === 0) {
       if (!this.summariesShown) {
         hide(this.$summariesLink)
@@ -2403,9 +2429,11 @@ class Simulation {
   }
 
   showSummaries() {
+    this.runsUpdate = true
     this.summariesShown = true
     this.$summariesLink.innerHTML = "Hide All"
     show(this.$summaries)
+    this.markDirty()
   }
 
   toggle(e: Event) {
@@ -2419,8 +2447,10 @@ class Simulation {
     }
   }
 
-  toggleSummaries(e: Event) {
-    e.preventDefault()
+  toggleSummaries(e?: Event) {
+    if (e) {
+      e.preventDefault()
+    }
     if (this.summariesShown) {
       this.hideSummaries()
     } else {
@@ -2549,7 +2579,7 @@ function defaultConfig(): Config {
     // likelihood of someone installing SafetyScore for visiting a foreign safeguarded cluster
     installForeign: 0,
     // likelihood of someone installing SafetyScore if one of their own clusters becomes safeguarded
-    installOwn: 0,
+    installOwn: 1,
     // whether the app is installed for the whole household during initial installations
     installHousehold: false,
     // isolate whole household if someone self-isolates
@@ -2593,7 +2623,7 @@ function defaultConfig(): Config {
     // the portion of clusters who safeguard access via SafetyScore
     safeguardedClusters: 2 / 3,
     // the portion of people who have SafetyScore installed at the start
-    safetyScoreInstalled: 2 / 3,
+    safetyScoreInstalled: 0,
     // a multiplicative weighting factor for second-degree tokens
     secondDegreeWeight: 1,
     // likelihood of a symptomatic person self-attesting
@@ -2865,6 +2895,12 @@ function handleKeyboard(e: KeyboardEvent) {
   }
   if (e.code === "KeyR" && ctrl) {
     ctrl.randomise()
+    return
+  }
+  if (e.code === "KeyX" && ctrl) {
+    for (const sim of ctrl.simList) {
+      sim.toggleSummaries()
+    }
     return
   }
 }
