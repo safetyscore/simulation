@@ -1047,22 +1047,14 @@ class Controller {
       "Isolated",
       SORT_ASCENDING
     )
-    const infected = new Comparison(
-      this,
-      "infected",
-      "Infected",
-      SORT_ASCENDING
-    )
     if (setupUI) {
       this.$main.appendChild(barchart.setupUI())
       this.$main.appendChild(healthy.setupUI())
       this.$main.appendChild(isolated.setupUI())
-      this.$main.appendChild(infected.setupUI())
     }
     this.barchart = barchart
     this.cmps.push(healthy)
     this.cmps.push(isolated)
-    this.cmps.push(infected)
   }
 
   initBrowser() {
