@@ -18,7 +18,7 @@ the web interface:
 ```typescript
 {
   // the portion of people who have an Apple/Google-style Contact Tracing app installed
-  appleGoogleInstalled: 0.6,
+  appleGoogleInstalled: 2 / 3,
 
   // distribution of the number of clusters for a person
   clusterCount: new ZipfDistribution({min: 1, max: 20}),
@@ -32,20 +32,14 @@ the web interface:
   // number of days to run the simulation
   days: 400,
 
-  // the likelihood of a SafetyScore user being okay with visiting a non-gate-kept cluster
-  exposedVisit: 0.1,
+  // the likelihood of a SafetyScore user being okay with visiting a non-safeguarded cluster
+  exposedVisit: 1 / 5,
 
   // likelihood of dying once infected
   fatalityRisk: 0.01,
 
   // daily likelihood of someone in the whole population getting infected from outside the population
   foreignImports: 0.06,
-
-  // the portion of clusters who gate-keep access via SafetyScore
-  gatekeptClusters: 0.6,
-
-  // the SafetyScore level needed to access a gate-kept cluster
-  gatekeptThreshold: 50,
 
   // distribution of the group size within a cluster for a single period
   groupSize: new PoissonDistribution({mean: 2.5, min: 2, max: 20}),
@@ -56,14 +50,20 @@ the web interface:
   // distribution of illness days after incubation
   illness: new NormalDistribution({mean: 10.5, min: 7}),
 
+  // font to use on labels in generated images
+  imageFont: "HelveticaNeue-Light, Arial",
+
   // distribution of the days of natural immunity
   immunity: new NormalDistribution({mean: 238, min: 0}),
 
   // likelihood of someone getting infected during a single contact
   infectionRisk: 0.01,
 
-  // likelihood of someone installing SafetyScore for visiting a foreign gate-kept cluster
+  // likelihood of someone installing SafetyScore for visiting a foreign safeguarded cluster
   installForeign: 0,
+
+  // likelihood of someone installing SafetyScore if one of their own clusters becomes safeguarded
+  installOwn: 1,
 
   // whether the app is installed for the whole household during initial installations
   installHousehold: false,
@@ -81,16 +81,16 @@ the web interface:
   isolationLikelihood: 0.9,
 
   // likelihood of an isolated person staying at home for any given period during lockdown
-  isolationLockdown: 0.9,
+  isolationLockdown: 0.95,
 
   // the SafetyScore level below which one is notified to self-isolate and test
   isolationThreshold: 50,
 
   // likelihood of a symptomatic individual self-isolating
-  isolationSymptomatic: 1,
+  isolationSymptomatic: 0.9,
 
   // portion of the population who will not be isolated during lockdown
-  keyWorkers: 0.16,
+  keyWorkers: 0.13,
 
   // the number of infected people, below which a lockdown could end
   lockdownEnd: 5,
@@ -99,10 +99,7 @@ the web interface:
   lockdownEndWindow: 14,
 
   // the number of infected people which will trigger a lockdown
-  lockdownStart: 15,
-
-  // format of the generated output file, can be "json" or "png"
-  outputFormat: "png",
+  lockdownStart: 6,
 
   // total number of people
   population: 10000,
@@ -114,7 +111,22 @@ the web interface:
   preSymptomaticInfectiousDays: 3,
 
   // portion of clusters which are public
-  publicClusters: 0.15,
+  publicClusters: 0.16,
+
+  // maximum number of runs to execute
+  runsMax: 50,
+
+  // minimum number of runs to execute
+  runsMin: 5,
+
+  // threshold of variance change at which to stop runs
+  runsVariance: 0.004,
+
+  // the SafetyScore level needed to access a safeguarded cluster
+  safeguardThreshold: 50,
+
+  // the portion of clusters who safeguard access via SafetyScore
+  safeguardedClusters: 2 / 3,
 
   // the portion of people who have SafetyScore installed at the start
   safetyScoreInstalled: 0,
@@ -126,7 +138,7 @@ the web interface:
   selfAttestation: 0,
 
   // the portion of people who become symptomatic
-  symptomatic: 0.2,
+  symptomatic: 1 / 3,
 
   // the distribution of the delay days between symptomatic/notified and testing
   testDelay: new PoissonDistribution({mean: 2, min: 1, max: 10}),
@@ -135,7 +147,7 @@ the web interface:
   testKeyWorkers: false,
 
   // likelihood of a key worker getting tested
-  testKeyWorker: 0.1,
+  testKeyWorker: 1,
 
   // likelihood of a person getting themselves tested if notified
   testNotified: 0.9,
@@ -219,7 +231,7 @@ The system currently supports four distinct modes:
 
   The various tokens are then aggregated to produce a SafetyScore for everyone.
   If the score drops below a certain threshold, then the individual is prompted
-  to isolate, and get tested. Based on `gatekeptClusters`, some clusters may
+  to isolate, and get tested. Based on `safeguardedClusters`, some clusters may
   also limit access to people with a good enough score.
 
 * `LOCKDOWN` — In this mode, a lockdown is triggered once `lockdownStart` number
@@ -228,21 +240,54 @@ The system currently supports four distinct modes:
   the number of daily infections drops below `lockdownEnd` for at least
   `lockdownEndWindow` days.
 
+### Adaptive Runs
+
+We auto-adapt the number of runs for each simulation until it converges. We use
+the `runsVariance` parameter as the threshold value Ω [^1], and we stop the
+simulation when the variance of the healthy percentage of the population changes
+less than Ω.
+
+[^1]: Myers, Lofgren, and Fefferman. The Ω-test for certainty in Monte Carlo
+simulations. 2020
+
+### Keyboard Shortcuts
+
+The web interface supports a few keyboard shortcuts:
+
+* Press `e` to bring up the config editor.
+
+* Press `escape` to exit the config editor.
+
+* Press `ctrl-enter` from within the config editor to save changes and run a new
+  simulation.
+
+* Press `r` to re-run all simulations with a new random factor.
+
+* Press `x` to toggle the showing/hiding of the summary tables.
+
 ### Future Considerations
 
 This work is just the start. We will be evolving this to support various
 improvements like:
 
+* Factoring in hospitalisation, and its impact on transmission and fatality
+  risk.
+
 * Locale-specific demographics and their relationship to risk and productivity.
 
-* Distinct cluster types such as schools, hospitals, offices, etc.
+* Distinct cluster types such as schools, hospitals, offices, care homes, etc.
 
 * The sensitivity/specificity of testing relative to the progression of the
+  illness.
+
+* Varying transmission and symptomatic status relative to the progression of the
   illness.
 
 * Environmental factors and the related effects on transmission.
 
 * Better representations of each of the methods.
+
+* Supporting gradual "conversion" of clusters into safeguarded ones.
 
 * Varying temporal contact structures based on social behaviour.
 
@@ -256,7 +301,8 @@ improvements like:
 * Macroscopic mobility structures such as airports, and local commute
   topologies.
 
-* Varying risk based on healthcare capacity.
+* Varying risk based on healthcare capacity and the effectiveness of treatment,
+  and varying the effectiveness based on when treatment starts.
 
 * Varying levels of exposure during contact based on environmental factors.
 
@@ -265,11 +311,6 @@ improvements like:
 We would love your help on any of these fronts.
 
 ### Limitations
-
-* The number of days that can be represented on the graph is limited by the
-  viewer's screen width. This is due to the fact that we restrict the graph
-  drawing to whole integer values so as to avoid the antialiasing done by
-  browser engines.
 
 * The interface hasn't yet been adapted to mobile browsers.
 
