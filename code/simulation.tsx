@@ -2379,10 +2379,12 @@ class Simulation {
 
   downloadGraph(format: string, selected?: number) {
     const filename = this.getFilename(format)
+    const height = 1500
+    const legend = 300
+    const width = 2400
     const graph = document.createElementNS(SVG, "svg")
     graph.setAttribute("height", "100%")
-    graph.setAttribute("preserveAspectRatio", "none")
-    graph.setAttribute("viewBox", `0 0 ${this.cfg.days} ${this.cfg.population}`)
+    graph.setAttribute("viewBox", `0 0 ${width} ${height + legend}`)
     graph.setAttribute("width", "100%")
     let results = this.results
     if (typeof selected !== "undefined") {
@@ -2390,87 +2392,156 @@ class Simulation {
     } else if (this.selected !== -1) {
       results = this.runs[this.selected]
     }
-    this.generateGraph(graph, results)
-    const svg = new XMLSerializer().serializeToString(graph)
-    const blob = new Blob([svg], {type: "image/svg+xml"})
-    if (format === "svg") {
-      triggerDownload(blob, filename)
-      return
-    }
-    const legend = 300
-    const canvas = document.createElement("canvas")
-    const ctx = canvas.getContext("2d")!
-    const height = 1500
+    this.generateGraph(graph, results, height, width)
+    // Compute values for drawing the legend.
+    const bottomline = height + 210
+    const fifth = width / 5
+    const font = this.cfg.imageFont
+    const fontSize = "60px"
+    const fontWeight = "500"
+    const midline = height + 75
     const summary = getSummary(results)
-    const width = 2400
-    const img = new Image(width, height)
-    const url = URL.createObjectURL(blob)
-    canvas.height = height + legend
-    canvas.width = width
-    img.onload = () => {
-      URL.revokeObjectURL(url)
-      const bottomline = height + 210
-      const fifth = width / 5
-      const font = `60px bold ${this.cfg.imageFont}`
-      const midline = height + 75
-      const topline = height + 130
-      const textpad = 120
-      let posX = 70
-      // Draw blank area at bottom of the canvas for the legend.
-      ctx.fillStyle = "#fff"
-      ctx.fillRect(0, 0, width, height + legend)
-      // Draw the graph.
-      ctx.drawImage(img, 0, 0, width, height)
-      // Draw the legend for healthy.
-      ctx.fillStyle = COLOUR_HEALTHY
-      ctx.fillRect(posX, midline, 100, 100)
-      ctx.fillStyle = "#000"
-      ctx.font = font
-      ctx.fillText("Healthy", posX + textpad, topline)
-      ctx.fillText(`${percent(summary.healthy)}`, posX + textpad, bottomline)
-      // Draw the legend for infected.
-      posX += fifth
-      ctx.fillStyle = COLOUR_INFECTED
-      ctx.fillRect(posX, midline, 100, 100)
-      ctx.fillStyle = "#000"
-      ctx.font = font
-      ctx.fillText("Infected", posX + textpad, topline)
-      ctx.fillText(`${percent(summary.infected)}`, posX + textpad, bottomline)
-      // Draw the legend for recovered.
-      posX += fifth
-      ctx.fillStyle = COLOUR_RECOVERED
-      ctx.fillRect(posX, midline, 100, 100)
-      ctx.fillStyle = "#000"
-      ctx.font = font
-      ctx.fillText("Recovered", posX + textpad, topline)
-      // Draw the legend for dead.
-      posX += fifth
-      ctx.fillStyle = COLOUR_DEAD
-      ctx.fillRect(posX, midline, 100, 100)
-      ctx.fillStyle = "#000"
-      ctx.font = font
-      ctx.fillText("Dead", posX + textpad, topline)
-      ctx.fillText(`${percent(summary.dead)}`, posX + textpad, bottomline)
-      // Draw the legend for isolated.
-      posX += fifth
-      ctx.fillStyle = "#eeeeee"
-      ctx.fillRect(posX, midline, 100, 100)
-      ctx.fillStyle = "#000"
-      ctx.font = font
-      ctx.fillText("Isolated", posX + textpad, topline)
-      ctx.fillText(`${percent(summary.isolated)}`, posX + textpad, bottomline)
-      canvas.toBlob((blob) => {
-        if (blob) {
-          triggerDownload(blob, filename)
-        }
-      })
-    }
-    img.src = url
+    const topline = height + 130
+    const textpad = 120
+    let posX = 70
+    // Draw blank area at bottom of the canvas for the legend.
+    addNode(graph, "rect", {
+      fill: "#fff",
+      height: legend,
+      width: width,
+      x: 0,
+      y: height,
+    })
+    // Draw the legend for healthy.
+    addNode(graph, "rect", {
+      fill: COLOUR_HEALTHY,
+      height: 100,
+      width: 100,
+      x: posX,
+      y: midline,
+    })
+    addNode(graph, "text", {
+      "font-family": font,
+      "font-size": fontSize,
+      "font-weight": fontWeight,
+      x: posX + textpad,
+      y: topline,
+    }).innerHTML = "Healthy"
+    addNode(graph, "text", {
+      "font-family": font,
+      "font-size": fontSize,
+      "font-weight": fontWeight,
+      x: posX + textpad,
+      y: bottomline,
+    }).innerHTML = `${percent(summary.healthy)}`
+    // Draw the legend for infected.
+    posX += fifth
+    addNode(graph, "rect", {
+      fill: COLOUR_INFECTED,
+      height: 100,
+      width: 100,
+      x: posX,
+      y: midline,
+    })
+    addNode(graph, "text", {
+      "font-family": font,
+      "font-size": fontSize,
+      "font-weight": fontWeight,
+      x: posX + textpad,
+      y: topline,
+    }).innerHTML = "Infected"
+    addNode(graph, "text", {
+      "font-family": font,
+      "font-size": fontSize,
+      "font-weight": fontWeight,
+      x: posX + textpad,
+      y: bottomline,
+    }).innerHTML = `${percent(summary.infected)}`
+    // Draw the legend for recovered.
+    posX += fifth
+    addNode(graph, "rect", {
+      fill: COLOUR_RECOVERED,
+      height: 100,
+      width: 100,
+      x: posX,
+      y: midline,
+    })
+    addNode(graph, "text", {
+      "font-family": font,
+      "font-size": fontSize,
+      "font-weight": fontWeight,
+      x: posX + textpad,
+      y: topline,
+    }).innerHTML = "Recovered"
+    // Draw the legend for dead.
+    posX += fifth
+    addNode(graph, "rect", {
+      fill: COLOUR_DEAD,
+      height: 100,
+      width: 100,
+      x: posX,
+      y: midline,
+    })
+    addNode(graph, "text", {
+      "font-family": font,
+      "font-size": fontSize,
+      "font-weight": fontWeight,
+      x: posX + textpad,
+      y: topline,
+    }).innerHTML = "Dead"
+    addNode(graph, "text", {
+      "font-family": font,
+      "font-size": fontSize,
+      "font-weight": fontWeight,
+      x: posX + textpad,
+      y: bottomline,
+    }).innerHTML = `${percent(summary.dead)}`
+    // Draw the legend for isolated.
+    posX += fifth
+    addNode(graph, "rect", {
+      fill: "#eeeeee",
+      height: 100,
+      width: 100,
+      x: posX,
+      y: midline,
+    })
+    addNode(graph, "text", {
+      "font-family": font,
+      "font-size": fontSize,
+      "font-weight": fontWeight,
+      x: posX + textpad,
+      y: topline,
+    }).innerHTML = "Isolated"
+    addNode(graph, "text", {
+      "font-family": font,
+      "font-size": fontSize,
+      "font-weight": fontWeight,
+      x: posX + textpad,
+      y: bottomline,
+    }).innerHTML = `${percent(summary.isolated)}`
+    // Generate the SVG and convert into a downloadable image.
+    const svg = new XMLSerializer().serializeToString(graph)
+    downloadImage({filename, format, height: height + legend, svg, width})
   }
 
-  generateGraph($graph: SVGElement, results: Stats[]) {
-    const height = this.cfg.population
-    const width = this.cfg.days
+  generateGraph(
+    $graph: SVGElement,
+    results: Stats[],
+    height?: number,
+    width?: number
+  ) {
+    let unitX = 1
+    let unitY = 1
+    if (height) {
+      unitY = height / this.cfg.population
+    } else {
+      height = this.cfg.population
+    }
+    if (width) {
+      unitX = width / this.cfg.days
+    } else {
+      width = this.cfg.days
+    }
     addNode($graph, "rect", {
       fill: "#eeeeee",
       height: height,
@@ -2487,32 +2558,32 @@ class Simulation {
     const recovered = []
     for (let i = 0; i < days; i++) {
       const stats = results[i]
-      const posX = i
-      let posY = stats.dead
+      const posX = i * unitX
+      let posY = stats.dead * unitY
       recovered.push(`${posX},${posY}`)
-      posY += stats.recovered
+      posY += stats.recovered * unitY
       healthy.push(`${posX},${posY}`)
-      posY += stats.healthy
+      posY += stats.healthy * unitY
       infected.push(`${posX},${posY}`)
     }
+    const endX = days * unitX
     const last = results[days - 1]
-    const posX = days
-    let posY = last.dead
-    recovered.push(`${posX},${posY}`)
-    recovered.push(`${days},${height}`)
+    let posY = last.dead * unitY
+    recovered.push(`${endX},${posY}`)
+    recovered.push(`${endX},${height}`)
     recovered.push(`0,${height}`)
-    posY += last.recovered
-    healthy.push(`${posX},${posY}`)
-    healthy.push(`${days},${height}`)
+    posY += last.recovered * unitY
+    healthy.push(`${endX},${posY}`)
+    healthy.push(`${endX},${height}`)
     healthy.push(`0,${height}`)
-    posY += last.healthy
-    infected.push(`${posX},${posY}`)
-    infected.push(`${days},${height}`)
+    posY += last.healthy * unitY
+    infected.push(`${endX},${posY}`)
+    infected.push(`${endX},${height}`)
     infected.push(`0,${height}`)
     addNode($graph, "rect", {
       fill: COLOUR_DEAD,
       height: height,
-      width: days,
+      width: endX,
       x: 0,
       y: 0,
     })
