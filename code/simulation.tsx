@@ -1069,7 +1069,6 @@ class Controller {
   }
 
   initNodeJS(method: number) {
-    const cfg = this.cfg
     this.init([method], false)
     this.run()
   }
@@ -2133,7 +2132,7 @@ class Person {
     }
     const model = this.model
     this.gen = gen
-    this.infectedDay = model.day
+    this.infectedDay = today
     this.infectionEndDay =
       model.day +
       model.cfg.preInfectiousDays +
@@ -2950,7 +2949,7 @@ class Simulation {
         <span>Run New Simulation</span>
       </div>
     )
-    $run.addEventListener("click", (e: any) => this.randomise())
+    $run.addEventListener("click", () => this.randomise())
     const $settings = (
       <div class="action">
         <img src="settings.svg" alt="Settings" />
@@ -3366,12 +3365,6 @@ function downloadPNG(
   img.src = url
 }
 
-function genSVG(colors: string) {
-  const out = ["<svg>"]
-  out.push("</svg>")
-  console.log(out.join(""))
-}
-
 function getCmdBool(flag: string) {
   return process.argv.indexOf(flag) !== -1
 }
@@ -3476,15 +3469,6 @@ function getZeta(n: number, theta: number) {
     sum += 1 / Math.pow(i + 1, theta)
   }
   return sum
-}
-
-function greyscale(colour: string) {
-  let grey = parseInt(colour.slice(1, 3), 16)
-  grey += parseInt(colour.slice(3, 5), 16)
-  grey += parseInt(colour.slice(5, 7), 16)
-  grey = Math.ceil(grey / 3)
-  const hex = grey.toString(16)
-  return `#${hex}${hex}${hex}`
 }
 
 function h(
@@ -3600,7 +3584,7 @@ function killWorkers() {
 
 function percent(v: number) {
   if (v < 1 || v > 99) {
-    v = parseFloat((Math.round(v * 100)/100).toFixed(1))
+    v = parseFloat((Math.round(v * 100) / 100).toFixed(1))
     if (v == 0) {
       return "0"
     }
