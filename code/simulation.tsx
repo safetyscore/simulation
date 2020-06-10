@@ -353,7 +353,7 @@ class BarChart {
       "text-anchor": "middle",
       x: midX,
       y: this.height - this.labelHeight + this.padLabel,
-    }).innerHTML = label
+    }).innerHTML = `% ${label}`
     // Draw the bars for the different methods.
     const start = midX - 160
     for (let i = 0; i < METHODS.length; i++) {
@@ -635,6 +635,13 @@ class Comparison {
       y: padTop,
       width: 1,
       height: posY - padTop,
+    })
+    // Draw the X-axis line.
+    addNode($graph, "rect", {
+      x: 53,
+      y: posY - 1,
+      width: segment * 4,
+      height: 1,
     })
     const top = height - methodLabelHeight
     const y = top - padTop
