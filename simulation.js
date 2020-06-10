@@ -734,8 +734,6 @@ var ConfigValidator = /** @class */ (function () {
 var Controller = /** @class */ (function () {
     function Controller() {
         var cfg = defaultConfig();
-        cfg.runsMax = 1;
-        cfg.runsMin = 1;
         this.cfg = cfg;
         this.cmps = [];
         this.definition = defaultConfigDefinition();
@@ -1552,7 +1550,7 @@ var Model = /** @class */ (function () {
                     }
                 }
                 else if ((person.status & STATUS_ISOLATED) !== 0) {
-                    if (rng.isolationLockdown.next() <= cfg.isolationEffectiveness) {
+                    if (rng.isolationLockdown.next() <= cfg.isolationLockdown) {
                         isolatedPeriods++;
                         continue;
                     }
@@ -2738,19 +2736,19 @@ function defaultConfig() {
         // likelihood of a notified person self-isolating
         isolationLikelihood: 0.9,
         // likelihood of an isolated person staying at home for any given period during lockdown
-        isolationLockdown: 0.9,
+        isolationLockdown: 0.95,
         // the SafetyScore level below which one is notified to self-isolate and test
         isolationThreshold: 50,
         // likelihood of a symptomatic individual self-isolating
         isolationSymptomatic: 0.9,
         // portion of the population who will not be isolated during lockdown
-        keyWorkers: 0.16,
+        keyWorkers: 0.13,
         // the number of infected people, below which a lockdown could end
         lockdownEnd: 5,
         // number of days the number of infected people must be below "lockdownEnd" before lockdown ends
         lockdownEndWindow: 14,
         // the number of infected people which will trigger a lockdown
-        lockdownStart: 7,
+        lockdownStart: 6,
         // total number of people
         population: 10000,
         // number of days before becoming infectious
@@ -2758,13 +2756,13 @@ function defaultConfig() {
         // number of days of being infectious before possibly becoming symptomatic
         preSymptomaticInfectiousDays: 3,
         // portion of clusters which are public
-        publicClusters: 0.15,
+        publicClusters: 0.16,
         // maximum number of runs to execute
         runsMax: 50,
         // minimum number of runs to execute
         runsMin: 5,
         // threshold of variance change at which to stop runs
-        runsVariance: 0.005,
+        runsVariance: 0.004,
         // the SafetyScore level needed to access a safeguarded cluster
         safeguardThreshold: 50,
         // the portion of clusters who safeguard access via SafetyScore
@@ -3084,7 +3082,7 @@ function killWorkers() {
 }
 function percent(v) {
     if (v < 1 || v > 99) {
-        v = parseFloat(v.toFixed(2));
+        v = parseFloat((Math.round(v * 100) / 100).toFixed(1));
         if (v == 0) {
             return "0";
         }
