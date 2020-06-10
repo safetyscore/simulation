@@ -734,6 +734,8 @@ var ConfigValidator = /** @class */ (function () {
 var Controller = /** @class */ (function () {
     function Controller() {
         var cfg = defaultConfig();
+        cfg.runsMax = 1;
+        cfg.runsMin = 1;
         this.cfg = cfg;
         this.cmps = [];
         this.definition = defaultConfigDefinition();
