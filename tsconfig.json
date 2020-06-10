@@ -8,6 +8,8 @@
 		"module": "None",
 		"noImplicitAny": true,
 		"noImplicitThis": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
 		"outDir": "site",
 		"strictFunctionTypes": true,
 		"strictNullChecks": true,
