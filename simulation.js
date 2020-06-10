@@ -183,7 +183,7 @@ var BarChart = /** @class */ (function () {
         graph.setAttribute("width", "100%");
         this.generateGraph(graph, height, width);
         var svg = new XMLSerializer().serializeToString(graph);
-        downloadImage({ filename: filename, format: format, height: height, svg: svg, width: width });
+        downloadImage({ filename: filename, format: format, height: height * 2, svg: svg, width: width * 2 });
     };
     BarChart.prototype.generateGraph = function ($graph, height, width) {
         addNode($graph, "rect", {
@@ -333,7 +333,7 @@ var Comparison = /** @class */ (function () {
         graph.setAttribute("width", "100%");
         this.generateGraph(graph, height, width);
         var svg = new XMLSerializer().serializeToString(graph);
-        downloadImage({ filename: filename, format: format, height: height, svg: svg, width: width });
+        downloadImage({ filename: filename, format: format, height: height * 2, svg: svg, width: width * 2 });
     };
     Comparison.prototype.generateGraph = function ($graph, height, width) {
         addNode($graph, "rect", {
@@ -1951,12 +1951,13 @@ var Simulation = /** @class */ (function () {
         triggerDownload(blob, filename);
     };
     Simulation.prototype.downloadGraph = function (format, selected) {
-        var _this = this;
         var filename = this.getFilename(format);
+        var height = 1500;
+        var legend = 300;
+        var width = 2400;
         var graph = document.createElementNS(SVG, "svg");
         graph.setAttribute("height", "100%");
-        graph.setAttribute("preserveAspectRatio", "none");
-        graph.setAttribute("viewBox", "0 0 " + this.cfg.days + " " + this.cfg.population);
+        graph.setAttribute("viewBox", "0 0 " + width + " " + (height + legend));
         graph.setAttribute("width", "100%");
         var results = this.results;
         if (typeof selected !== "undefined") {
@@ -1965,86 +1966,152 @@ var Simulation = /** @class */ (function () {
         else if (this.selected !== -1) {
             results = this.runs[this.selected];
         }
-        this.generateGraph(graph, results);
-        var svg = new XMLSerializer().serializeToString(graph);
-        var blob = new Blob([svg], { type: "image/svg+xml" });
-        if (format === "svg") {
-            triggerDownload(blob, filename);
-            return;
-        }
-        var legend = 300;
-        var canvas = document.createElement("canvas");
-        var ctx = canvas.getContext("2d");
-        var height = 1500;
+        this.generateGraph(graph, results, height, width);
+        // Compute values for drawing the legend.
+        var bottomline = height + 210;
+        var fifth = width / 5;
+        var font = this.cfg.imageFont;
+        var fontSize = "60px";
+        var fontWeight = "500";
+        var midline = height + 75;
         var summary = getSummary(results);
-        var width = 2400;
-        var img = new Image(width, height);
-        var url = URL.createObjectURL(blob);
-        canvas.height = height + legend;
-        canvas.width = width;
-        img.onload = function () {
-            URL.revokeObjectURL(url);
-            var bottomline = height + 210;
-            var fifth = width / 5;
-            var font = "60px bold " + _this.cfg.imageFont;
-            var midline = height + 75;
-            var topline = height + 130;
-            var textpad = 120;
-            var posX = 70;
-            // Draw blank area at bottom of the canvas for the legend.
-            ctx.fillStyle = "#fff";
-            ctx.fillRect(0, 0, width, height + legend);
-            // Draw the graph.
-            ctx.drawImage(img, 0, 0, width, height);
-            // Draw the legend for healthy.
-            ctx.fillStyle = COLOUR_HEALTHY;
-            ctx.fillRect(posX, midline, 100, 100);
-            ctx.fillStyle = "#000";
-            ctx.font = font;
-            ctx.fillText("Healthy", posX + textpad, topline);
-            ctx.fillText("" + percent(summary.healthy), posX + textpad, bottomline);
-            // Draw the legend for infected.
-            posX += fifth;
-            ctx.fillStyle = COLOUR_INFECTED;
-            ctx.fillRect(posX, midline, 100, 100);
-            ctx.fillStyle = "#000";
-            ctx.font = font;
-            ctx.fillText("Infected", posX + textpad, topline);
-            ctx.fillText("" + percent(summary.infected), posX + textpad, bottomline);
-            // Draw the legend for recovered.
-            posX += fifth;
-            ctx.fillStyle = COLOUR_RECOVERED;
-            ctx.fillRect(posX, midline, 100, 100);
-            ctx.fillStyle = "#000";
-            ctx.font = font;
-            ctx.fillText("Recovered", posX + textpad, topline);
-            // Draw the legend for dead.
-            posX += fifth;
-            ctx.fillStyle = COLOUR_DEAD;
-            ctx.fillRect(posX, midline, 100, 100);
-            ctx.fillStyle = "#000";
-            ctx.font = font;
-            ctx.fillText("Dead", posX + textpad, topline);
-            ctx.fillText("" + percent(summary.dead), posX + textpad, bottomline);
-            // Draw the legend for isolated.
-            posX += fifth;
-            ctx.fillStyle = "#eeeeee";
-            ctx.fillRect(posX, midline, 100, 100);
-            ctx.fillStyle = "#000";
-            ctx.font = font;
-            ctx.fillText("Isolated", posX + textpad, topline);
-            ctx.fillText("" + percent(summary.isolated), posX + textpad, bottomline);
-            canvas.toBlob(function (blob) {
-                if (blob) {
-                    triggerDownload(blob, filename);
-                }
-            });
-        };
-        img.src = url;
+        var topline = height + 130;
+        var textpad = 120;
+        var posX = 70;
+        // Draw blank area at bottom of the canvas for the legend.
+        addNode(graph, "rect", {
+            fill: "#fff",
+            height: legend,
+            width: width,
+            x: 0,
+            y: height,
+        });
+        // Draw the legend for healthy.
+        addNode(graph, "rect", {
+            fill: COLOUR_HEALTHY,
+            height: 100,
+            width: 100,
+            x: posX,
+            y: midline,
+        });
+        addNode(graph, "text", {
+            "font-family": font,
+            "font-size": fontSize,
+            "font-weight": fontWeight,
+            x: posX + textpad,
+            y: topline,
+        }).innerHTML = "Healthy";
+        addNode(graph, "text", {
+            "font-family": font,
+            "font-size": fontSize,
+            "font-weight": fontWeight,
+            x: posX + textpad,
+            y: bottomline,
+        }).innerHTML = "" + percent(summary.healthy);
+        // Draw the legend for infected.
+        posX += fifth;
+        addNode(graph, "rect", {
+            fill: COLOUR_INFECTED,
+            height: 100,
+            width: 100,
+            x: posX,
+            y: midline,
+        });
+        addNode(graph, "text", {
+            "font-family": font,
+            "font-size": fontSize,
+            "font-weight": fontWeight,
+            x: posX + textpad,
+            y: topline,
+        }).innerHTML = "Infected";
+        addNode(graph, "text", {
+            "font-family": font,
+            "font-size": fontSize,
+            "font-weight": fontWeight,
+            x: posX + textpad,
+            y: bottomline,
+        }).innerHTML = "" + percent(summary.infected);
+        // Draw the legend for recovered.
+        posX += fifth;
+        addNode(graph, "rect", {
+            fill: COLOUR_RECOVERED,
+            height: 100,
+            width: 100,
+            x: posX,
+            y: midline,
+        });
+        addNode(graph, "text", {
+            "font-family": font,
+            "font-size": fontSize,
+            "font-weight": fontWeight,
+            x: posX + textpad,
+            y: topline,
+        }).innerHTML = "Recovered";
+        // Draw the legend for dead.
+        posX += fifth;
+        addNode(graph, "rect", {
+            fill: COLOUR_DEAD,
+            height: 100,
+            width: 100,
+            x: posX,
+            y: midline,
+        });
+        addNode(graph, "text", {
+            "font-family": font,
+            "font-size": fontSize,
+            "font-weight": fontWeight,
+            x: posX + textpad,
+            y: topline,
+        }).innerHTML = "Dead";
+        addNode(graph, "text", {
+            "font-family": font,
+            "font-size": fontSize,
+            "font-weight": fontWeight,
+            x: posX + textpad,
+            y: bottomline,
+        }).innerHTML = "" + percent(summary.dead);
+        // Draw the legend for isolated.
+        posX += fifth;
+        addNode(graph, "rect", {
+            fill: "#eeeeee",
+            height: 100,
+            width: 100,
+            x: posX,
+            y: midline,
+        });
+        addNode(graph, "text", {
+            "font-family": font,
+            "font-size": fontSize,
+            "font-weight": fontWeight,
+            x: posX + textpad,
+            y: topline,
+        }).innerHTML = "Isolated";
+        addNode(graph, "text", {
+            "font-family": font,
+            "font-size": fontSize,
+            "font-weight": fontWeight,
+            x: posX + textpad,
+            y: bottomline,
+        }).innerHTML = "" + percent(summary.isolated);
+        // Generate the SVG and convert into a downloadable image.
+        var svg = new XMLSerializer().serializeToString(graph);
+        downloadImage({ filename: filename, format: format, height: height + legend, svg: svg, width: width });
     };
-    Simulation.prototype.generateGraph = function ($graph, results) {
-        var height = this.cfg.population;
-        var width = this.cfg.days;
+    Simulation.prototype.generateGraph = function ($graph, results, height, width) {
+        var unitX = 1;
+        var unitY = 1;
+        if (height) {
+            unitY = height / this.cfg.population;
+        }
+        else {
+            height = this.cfg.population;
+        }
+        if (width) {
+            unitX = width / this.cfg.days;
+        }
+        else {
+            width = this.cfg.days;
+        }
         addNode($graph, "rect", {
             fill: "#eeeeee",
             height: height,
@@ -2061,32 +2128,32 @@ var Simulation = /** @class */ (function () {
         var recovered = [];
         for (var i = 0; i < days; i++) {
             var stats = results[i];
-            var posX_1 = i;
-            var posY_1 = stats.dead;
-            recovered.push(posX_1 + "," + posY_1);
-            posY_1 += stats.recovered;
-            healthy.push(posX_1 + "," + posY_1);
-            posY_1 += stats.healthy;
-            infected.push(posX_1 + "," + posY_1);
+            var posX = i * unitX;
+            var posY_1 = stats.dead * unitY;
+            recovered.push(posX + "," + posY_1);
+            posY_1 += stats.recovered * unitY;
+            healthy.push(posX + "," + posY_1);
+            posY_1 += stats.healthy * unitY;
+            infected.push(posX + "," + posY_1);
         }
+        var endX = days * unitX;
         var last = results[days - 1];
-        var posX = days;
-        var posY = last.dead;
-        recovered.push(posX + "," + posY);
-        recovered.push(days + "," + height);
+        var posY = last.dead * unitY;
+        recovered.push(endX + "," + posY);
+        recovered.push(endX + "," + height);
         recovered.push("0," + height);
-        posY += last.recovered;
-        healthy.push(posX + "," + posY);
-        healthy.push(days + "," + height);
+        posY += last.recovered * unitY;
+        healthy.push(endX + "," + posY);
+        healthy.push(endX + "," + height);
         healthy.push("0," + height);
-        posY += last.healthy;
-        infected.push(posX + "," + posY);
-        infected.push(days + "," + height);
+        posY += last.healthy * unitY;
+        infected.push(endX + "," + posY);
+        infected.push(endX + "," + height);
         infected.push("0," + height);
         addNode($graph, "rect", {
             fill: COLOUR_DEAD,
             height: height,
-            width: days,
+            width: endX,
             x: 0,
             y: 0,
         });
