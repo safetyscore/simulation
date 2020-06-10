@@ -394,7 +394,7 @@ class BarChart {
     graph.setAttribute("width", "100%")
     this.generateGraph(graph, height, width)
     const svg = new XMLSerializer().serializeToString(graph)
-    downloadImage({filename, format, height, svg, width})
+    downloadImage({filename, format, height: height * 2, svg, width: width * 2})
   }
 
   generateGraph($graph: SVGElement, height: number, width: number) {
@@ -586,7 +586,7 @@ class Comparison {
     graph.setAttribute("width", "100%")
     this.generateGraph(graph, height, width)
     const svg = new XMLSerializer().serializeToString(graph)
-    downloadImage({filename, format, height, svg, width})
+    downloadImage({filename, format, height: height * 2, svg, width: width * 2})
   }
 
   generateGraph($graph: SVGElement, height: number, width: number) {
