@@ -772,7 +772,6 @@ var Controller = /** @class */ (function () {
         this.redraw();
     };
     Controller.prototype.initNodeJS = function (method) {
-        var cfg = this.cfg;
         this.init([method], false);
         this.run();
     };
@@ -1771,7 +1770,7 @@ var Person = /** @class */ (function () {
         }
         var model = this.model;
         this.gen = gen;
-        this.infectedDay = model.day;
+        this.infectedDay = today;
         this.infectionEndDay =
             model.day +
                 model.cfg.preInfectiousDays +
@@ -2488,7 +2487,7 @@ var Simulation = /** @class */ (function () {
         var $run = (h("div", { class: "action" },
             h("img", { class: "refresh", src: "refresh.svg", alt: "Refresh" }),
             h("span", null, "Run New Simulation")));
-        $run.addEventListener("click", function (e) { return _this.randomise(); });
+        $run.addEventListener("click", function () { return _this.randomise(); });
         var $settings = (h("div", { class: "action" },
             h("img", { src: "settings.svg", alt: "Settings" }),
             h("span", null, "Edit Config")));
@@ -2852,11 +2851,6 @@ function downloadPNG(svg, filename, height, width) {
     };
     img.src = url;
 }
-function genSVG(colors) {
-    var out = ["<svg>"];
-    out.push("</svg>");
-    console.log(out.join(""));
-}
 function getCmdBool(flag) {
     return process.argv.indexOf(flag) !== -1;
 }
@@ -2954,14 +2948,6 @@ function getZeta(n, theta) {
         sum += 1 / Math.pow(i + 1, theta);
     }
     return sum;
-}
-function greyscale(colour) {
-    var grey = parseInt(colour.slice(1, 3), 16);
-    grey += parseInt(colour.slice(3, 5), 16);
-    grey += parseInt(colour.slice(5, 7), 16);
-    grey = Math.ceil(grey / 3);
-    var hex = grey.toString(16);
-    return "#" + hex + hex + hex;
 }
 function h(tag, props) {
     var children = [];
