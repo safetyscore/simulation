@@ -382,13 +382,6 @@ var Comparison = /** @class */ (function () {
             width: 1,
             height: posY - padTop,
         });
-        // Draw the X-axis line.
-        addNode($graph, "rect", {
-            x: 53,
-            y: posY - 1,
-            width: segment * 4,
-            height: 1,
-        });
         var top = height - methodLabelHeight;
         var y = top - padTop;
         for (var i = 0; i < METHODS.length; i++) {
