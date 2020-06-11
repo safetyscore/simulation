@@ -1020,12 +1020,15 @@ class Controller {
   barchart: BarChart
   cfg: Config
   cmps: Comparison[]
+  cpus: number
   definition: string
   handle: number
   paused: boolean
   rand: number
+  schedule?: ReturnType<typeof setTimeout>
   sims: Record<number, Simulation>
   simList: Simulation[]
+  threads: number
   $main: HTMLElement
 
   constructor() {
@@ -1034,11 +1037,37 @@ class Controller {
     cfg.runsMin = 1
     this.cfg = cfg
     this.cmps = []
+    this.cpus = getCPUs()
     this.definition = defaultConfigDefinition()
     this.rand = 1591652858676
     this.paused = false
     this.simList = []
     this.sims = {}
+    this.threads = 0
+  }
+
+  decr() {
+    this.threads--
+    if (!this.schedule) {
+      this.schedule = setTimeout(() => {
+        this.schedule = undefined
+        this.spawn()
+      }, 0)
+    }
+  }
+
+  spawn() {
+    for (let i = 0; i < this.simList.length; i++) {
+      this.simList[i].spawn()
+    }
+  }
+
+  incr() {
+    if (this.threads < this.cpus) {
+      this.threads++
+      return true
+    }
+    return false
   }
 
   init(methods: number[], setupUI: boolean) {
@@ -1179,7 +1208,6 @@ class Model {
   clusters: Cluster[]
   computed: Computed
   day: number
-  handle: ReturnType<typeof setTimeout>
   households: number[][]
   id: number
   installBase: number
@@ -1244,9 +1272,6 @@ class Model {
     this.cfg = eval(`(${req.definition})`)
     this.method = req.method
     this.rand = req.rand
-    if (this.handle) {
-      clearTimeout(this.handle)
-    }
     this.init()
     this.run()
   }
@@ -2289,6 +2314,7 @@ class Simulation {
   runsFinished: boolean
   runsUpdate: boolean
   selected: number
+  spawnNeeded: boolean
   summaries: Summary[]
   summariesShown: boolean
   variance: number
@@ -2323,6 +2349,7 @@ class Simulation {
     this.runsFinished = false
     this.runsUpdate = false
     this.selected = -1
+    this.spawnNeeded = false
     this.summaries = []
     this.summariesShown = false
     this.variance = 0
@@ -2655,8 +2682,7 @@ class Simulation {
             Math.floor(this.summaries.length / 2)
           ].idx
         }
-        this.worker!.terminate()
-        this.worker = undefined
+        this.killWorker()
       } else {
         this.rand++
         this.results = []
@@ -2673,10 +2699,7 @@ class Simulation {
     if (this.hidden) {
       return
     }
-    if (this.worker) {
-      this.worker.terminate()
-      this.worker = undefined
-    }
+    this.killWorker()
     this.downloadHidden = true
     this.hidden = true
     this.$heading.style.paddingTop = "11px"
@@ -2712,6 +2735,15 @@ class Simulation {
     this.$summariesLink.innerHTML = "Show All"
     hide(this.$summaries)
     this.markDirty()
+  }
+
+  killWorker() {
+    if (this.worker) {
+      this.ctrl.decr()
+      this.worker.terminate()
+      this.worker = undefined
+    }
+    this.spawnNeeded = false
   }
 
   markDirty() {
@@ -2956,9 +2988,7 @@ class Simulation {
   }
 
   run(cfg: Config, definition: string, rand: number) {
-    if (this.worker) {
-      this.worker.terminate()
-    }
+    this.killWorker()
     if (IN_BROWSER) {
       this.$graph.setAttribute("viewBox", `0 0 ${cfg.days} ${cfg.population}`)
       this.$summary.innerHTML = "&nbsp;"
@@ -2975,14 +3005,13 @@ class Simulation {
     this.runs = []
     this.runsFinished = false
     this.runsUpdate = true
+    this.spawnNeeded = true
     this.selected = -1
     this.summaries = []
     this.variance = 0
-    this.worker = new AbstractedWorker("./simulation.js")
-    this.worker.onMessage((msg: WorkerResponse) => this.handleMessage(msg))
-    this.worker.postMessage({definition, method: this.method, rand})
     this.markDirty()
     hide(this.$download)
+    this.spawn()
   }
 
   setDimensions() {
@@ -3150,6 +3179,19 @@ class Simulation {
     this.$summariesLink.innerHTML = "Hide All"
     show(this.$summaries)
     this.markDirty()
+  }
+
+  spawn() {
+    if (this.spawnNeeded && this.ctrl.incr()) {
+      this.spawnNeeded = false
+      this.worker = new AbstractedWorker("./simulation.js")
+      this.worker.onMessage((msg: WorkerResponse) => this.handleMessage(msg))
+      this.worker.postMessage({
+        definition: this.definition,
+        method: this.method,
+        rand: this.rand,
+      })
+    }
   }
 
   toggle(e: Event) {
@@ -3443,6 +3485,13 @@ function downloadPNG(
     })
   }
   img.src = url
+}
+
+function getCPUs() {
+  if (typeof navigator !== "undefined" && navigator.hardwareConcurrency) {
+    return Math.max(1, Math.floor(navigator.hardwareConcurrency / 2))
+  }
+  return 2
 }
 
 function getCmdBool(flag: string) {
