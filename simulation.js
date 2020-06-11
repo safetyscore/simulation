@@ -745,35 +745,28 @@ var Controller = /** @class */ (function () {
         cfg.runsMin = 1;
         this.cfg = cfg;
         this.cmps = [];
-        this.cpus = getCPUs();
         this.definition = defaultConfigDefinition();
         this.rand = 1591652858676;
         this.paused = false;
         this.simList = [];
         this.sims = {};
-        this.threads = 0;
+        this.threads = getCPUs();
+        this.workers = 0;
     }
-    Controller.prototype.decr = function () {
+    Controller.prototype.createWorkers = function () {
+        for (var i = 0; i < this.simList.length; i++) {
+            this.simList[i].createWorker();
+        }
+    };
+    Controller.prototype.freeWorker = function () {
         var _this = this;
-        this.threads--;
+        this.workers--;
         if (!this.schedule) {
             this.schedule = setTimeout(function () {
                 _this.schedule = undefined;
-                _this.spawn();
+                _this.createWorkers();
             }, 0);
         }
-    };
-    Controller.prototype.spawn = function () {
-        for (var i = 0; i < this.simList.length; i++) {
-            this.simList[i].spawn();
-        }
-    };
-    Controller.prototype.incr = function () {
-        if (this.threads < this.cpus) {
-            this.threads++;
-            return true;
-        }
-        return false;
     };
     Controller.prototype.init = function (methods, setupUI) {
         for (var i = 0; i < methods.length; i++) {
@@ -890,6 +883,13 @@ var Controller = /** @class */ (function () {
         }
         this.barchart.update(method, info);
         this.requestRedraw();
+    };
+    Controller.prototype.workersAvailable = function () {
+        if (this.workers < this.threads) {
+            this.workers++;
+            return true;
+        }
+        return false;
     };
     return Controller;
 }());
@@ -1927,11 +1927,11 @@ var Simulation = /** @class */ (function () {
         this.runsFinished = false;
         this.runsUpdate = false;
         this.selected = -1;
-        this.spawnNeeded = false;
         this.summaries = [];
         this.summariesShown = false;
         this.variance = 0;
         this.width = 0;
+        this.workerNeeded = false;
     }
     Simulation.prototype.computeBoxPlots = function () {
         var dead = [];
@@ -1968,6 +1968,19 @@ var Simulation = /** @class */ (function () {
             sum += diff * diff;
         }
         return sum / runs;
+    };
+    Simulation.prototype.createWorker = function () {
+        var _this = this;
+        if (this.workerNeeded && this.ctrl.workersAvailable()) {
+            this.workerNeeded = false;
+            this.worker = new AbstractedWorker("./simulation.js");
+            this.worker.onMessage(function (msg) { return _this.handleMessage(msg); });
+            this.worker.postMessage({
+                definition: this.definition,
+                method: this.method,
+                rand: this.rand,
+            });
+        }
     };
     Simulation.prototype.downloadCSV = function (idx) {
         var lines = [];
@@ -2298,11 +2311,11 @@ var Simulation = /** @class */ (function () {
     };
     Simulation.prototype.killWorker = function () {
         if (this.worker) {
-            this.ctrl.decr();
             this.worker.terminate();
             this.worker = undefined;
+            this.ctrl.freeWorker();
         }
-        this.spawnNeeded = false;
+        this.workerNeeded = false;
     };
     Simulation.prototype.markDirty = function () {
         this.dirty = true;
@@ -2539,13 +2552,13 @@ var Simulation = /** @class */ (function () {
         this.runs = [];
         this.runsFinished = false;
         this.runsUpdate = true;
-        this.spawnNeeded = true;
         this.selected = -1;
         this.summaries = [];
         this.variance = 0;
+        this.workerNeeded = true;
         this.markDirty();
         hide(this.$download);
-        this.spawn();
+        this.createWorker();
     };
     Simulation.prototype.setDimensions = function () {
         if (!IN_BROWSER) {
@@ -2681,19 +2694,6 @@ var Simulation = /** @class */ (function () {
         this.$summariesLink.innerHTML = "Hide All";
         show(this.$summaries);
         this.markDirty();
-    };
-    Simulation.prototype.spawn = function () {
-        var _this = this;
-        if (this.spawnNeeded && this.ctrl.incr()) {
-            this.spawnNeeded = false;
-            this.worker = new AbstractedWorker("./simulation.js");
-            this.worker.onMessage(function (msg) { return _this.handleMessage(msg); });
-            this.worker.postMessage({
-                definition: this.definition,
-                method: this.method,
-                rand: this.rand,
-            });
-        }
     };
     Simulation.prototype.toggle = function (e) {
         if (e) {
