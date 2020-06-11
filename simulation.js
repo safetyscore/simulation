@@ -171,6 +171,14 @@ var BarChart = /** @class */ (function () {
                 x: posX + 25,
                 y: posY - 12,
             }).innerHTML = METHOD_LABELS[method];
+            addNode($graph, "text", {
+                "alignment-baseline": "middle",
+                "font-family": font,
+                "font-size": "11px",
+                "text-anchor": "middle",
+                x: posX + 25,
+                y: posY - 12 - 17,
+            }).innerHTML = decimal(median) + "%";
         }
     };
     BarChart.prototype.downloadGraph = function (format) {

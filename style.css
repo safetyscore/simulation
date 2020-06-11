@@ -303,13 +303,33 @@ textarea::-webkit-scrollbar {
   padding: 0 0 20px 8px;
 }
 
-#header a {
+#header-left {
+  float: left;
+}
+
+#header-left a {
   color: #fff;
   font-size: 30px;
   line-height: 30px;
 }
 
-#header img {
+#header-right {
+  float: right;
+}
+
+#header-right a {
+  color: #fff;
+  line-height: 30px;
+  padding-right: 20px;
+}
+
+#header-right a:hover {
+  color: #fff;
+  padding-right: 20px;
+  text-decoration: underline;
+}
+
+#header-right img {
   display: inline-block;
   float: right;
   padding: 0 14px 0 0;
