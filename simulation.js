@@ -143,7 +143,7 @@ var BarChart = /** @class */ (function () {
             "text-anchor": "middle",
             x: midX,
             y: this.height - this.labelHeight + this.padLabel,
-        }).innerHTML = label;
+        }).innerHTML = "% " + label;
         // Draw the bars for the different methods.
         var start = midX - 160;
         for (var i = 0; i < METHODS.length; i++) {
@@ -381,6 +381,13 @@ var Comparison = /** @class */ (function () {
             y: padTop,
             width: 1,
             height: posY - padTop,
+        });
+        // Draw the X-axis line.
+        addNode($graph, "rect", {
+            x: 53,
+            y: posY - 1,
+            width: segment * 4,
+            height: 1,
         });
         var top = height - methodLabelHeight;
         var y = top - padTop;
@@ -738,12 +745,36 @@ var Controller = /** @class */ (function () {
         cfg.runsMin = 1;
         this.cfg = cfg;
         this.cmps = [];
+        this.cpus = getCPUs();
         this.definition = defaultConfigDefinition();
         this.rand = 1591652858676;
         this.paused = false;
         this.simList = [];
         this.sims = {};
+        this.threads = 0;
     }
+    Controller.prototype.decr = function () {
+        var _this = this;
+        this.threads--;
+        if (!this.schedule) {
+            this.schedule = setTimeout(function () {
+                _this.schedule = undefined;
+                _this.spawn();
+            }, 0);
+        }
+    };
+    Controller.prototype.spawn = function () {
+        for (var i = 0; i < this.simList.length; i++) {
+            this.simList[i].spawn();
+        }
+    };
+    Controller.prototype.incr = function () {
+        if (this.threads < this.cpus) {
+            this.threads++;
+            return true;
+        }
+        return false;
+    };
     Controller.prototype.init = function (methods, setupUI) {
         for (var i = 0; i < methods.length; i++) {
             var method = methods[i];
@@ -909,9 +940,6 @@ var Model = /** @class */ (function () {
         this.cfg = eval("(" + req.definition + ")");
         this.method = req.method;
         this.rand = req.rand;
-        if (this.handle) {
-            clearTimeout(this.handle);
-        }
         this.init();
         this.run();
     };
@@ -1899,6 +1927,7 @@ var Simulation = /** @class */ (function () {
         this.runsFinished = false;
         this.runsUpdate = false;
         this.selected = -1;
+        this.spawnNeeded = false;
         this.summaries = [];
         this.summariesShown = false;
         this.variance = 0;
@@ -2215,8 +2244,7 @@ var Simulation = /** @class */ (function () {
                 if (this.selected === -1) {
                     this.selected = this.summaries[Math.floor(this.summaries.length / 2)].idx;
                 }
-                this.worker.terminate();
-                this.worker = undefined;
+                this.killWorker();
             }
             else {
                 this.rand++;
@@ -2233,10 +2261,7 @@ var Simulation = /** @class */ (function () {
         if (this.hidden) {
             return;
         }
-        if (this.worker) {
-            this.worker.terminate();
-            this.worker = undefined;
-        }
+        this.killWorker();
         this.downloadHidden = true;
         this.hidden = true;
         this.$heading.style.paddingTop = "11px";
@@ -2270,6 +2295,14 @@ var Simulation = /** @class */ (function () {
         this.$summariesLink.innerHTML = "Show All";
         hide(this.$summaries);
         this.markDirty();
+    };
+    Simulation.prototype.killWorker = function () {
+        if (this.worker) {
+            this.ctrl.decr();
+            this.worker.terminate();
+            this.worker = undefined;
+        }
+        this.spawnNeeded = false;
     };
     Simulation.prototype.markDirty = function () {
         this.dirty = true;
@@ -2489,10 +2522,7 @@ var Simulation = /** @class */ (function () {
         this.$summary = $summary;
     };
     Simulation.prototype.run = function (cfg, definition, rand) {
-        var _this = this;
-        if (this.worker) {
-            this.worker.terminate();
-        }
+        this.killWorker();
         if (IN_BROWSER) {
             this.$graph.setAttribute("viewBox", "0 0 " + cfg.days + " " + cfg.population);
             this.$summary.innerHTML = "&nbsp;";
@@ -2509,14 +2539,13 @@ var Simulation = /** @class */ (function () {
         this.runs = [];
         this.runsFinished = false;
         this.runsUpdate = true;
+        this.spawnNeeded = true;
         this.selected = -1;
         this.summaries = [];
         this.variance = 0;
-        this.worker = new AbstractedWorker("./simulation.js");
-        this.worker.onMessage(function (msg) { return _this.handleMessage(msg); });
-        this.worker.postMessage({ definition: definition, method: this.method, rand: rand });
         this.markDirty();
         hide(this.$download);
+        this.spawn();
     };
     Simulation.prototype.setDimensions = function () {
         if (!IN_BROWSER) {
@@ -2652,6 +2681,19 @@ var Simulation = /** @class */ (function () {
         this.$summariesLink.innerHTML = "Hide All";
         show(this.$summaries);
         this.markDirty();
+    };
+    Simulation.prototype.spawn = function () {
+        var _this = this;
+        if (this.spawnNeeded && this.ctrl.incr()) {
+            this.spawnNeeded = false;
+            this.worker = new AbstractedWorker("./simulation.js");
+            this.worker.onMessage(function (msg) { return _this.handleMessage(msg); });
+            this.worker.postMessage({
+                definition: this.definition,
+                method: this.method,
+                rand: this.rand,
+            });
+        }
     };
     Simulation.prototype.toggle = function (e) {
         if (e) {
@@ -2919,6 +2961,12 @@ function downloadPNG(svg, filename, height, width) {
         });
     };
     img.src = url;
+}
+function getCPUs() {
+    if (typeof navigator !== "undefined" && navigator.hardwareConcurrency) {
+        return Math.max(1, Math.floor(navigator.hardwareConcurrency / 2));
+    }
+    return 2;
 }
 function getCmdBool(flag) {
     return process.argv.indexOf(flag) !== -1;
