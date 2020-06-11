@@ -1020,7 +1020,6 @@ class Controller {
   barchart: BarChart
   cfg: Config
   cmps: Comparison[]
-  cpus: number
   definition: string
   handle: number
   paused: boolean
@@ -1029,6 +1028,7 @@ class Controller {
   sims: Record<number, Simulation>
   simList: Simulation[]
   threads: number
+  workers: number
   $main: HTMLElement
 
   constructor() {
@@ -1037,37 +1037,29 @@ class Controller {
     cfg.runsMin = 1
     this.cfg = cfg
     this.cmps = []
-    this.cpus = getCPUs()
     this.definition = defaultConfigDefinition()
     this.rand = 1591652858676
     this.paused = false
     this.simList = []
     this.sims = {}
-    this.threads = 0
+    this.threads = getCPUs()
+    this.workers = 0
   }
 
-  decr() {
-    this.threads--
+  createWorkers() {
+    for (let i = 0; i < this.simList.length; i++) {
+      this.simList[i].createWorker()
+    }
+  }
+
+  freeWorker() {
+    this.workers--
     if (!this.schedule) {
       this.schedule = setTimeout(() => {
         this.schedule = undefined
-        this.spawn()
+        this.createWorkers()
       }, 0)
     }
-  }
-
-  spawn() {
-    for (let i = 0; i < this.simList.length; i++) {
-      this.simList[i].spawn()
-    }
-  }
-
-  incr() {
-    if (this.threads < this.cpus) {
-      this.threads++
-      return true
-    }
-    return false
   }
 
   init(methods: number[], setupUI: boolean) {
@@ -1200,6 +1192,14 @@ class Controller {
     }
     this.barchart.update(method, info)
     this.requestRedraw()
+  }
+
+  workersAvailable() {
+    if (this.workers < this.threads) {
+      this.workers++
+      return true
+    }
+    return false
   }
 }
 
@@ -2314,12 +2314,12 @@ class Simulation {
   runsFinished: boolean
   runsUpdate: boolean
   selected: number
-  spawnNeeded: boolean
   summaries: Summary[]
   summariesShown: boolean
   variance: number
   width: number
   worker?: AbstractedWorker
+  workerNeeded: boolean
   $content: HTMLElement
   $download: HTMLElement
   $info: HTMLElement
@@ -2349,11 +2349,11 @@ class Simulation {
     this.runsFinished = false
     this.runsUpdate = false
     this.selected = -1
-    this.spawnNeeded = false
     this.summaries = []
     this.summariesShown = false
     this.variance = 0
     this.width = 0
+    this.workerNeeded = false
   }
 
   computeBoxPlots() {
@@ -2392,6 +2392,19 @@ class Simulation {
       sum += diff * diff
     }
     return sum / runs
+  }
+
+  createWorker() {
+    if (this.workerNeeded && this.ctrl.workersAvailable()) {
+      this.workerNeeded = false
+      this.worker = new AbstractedWorker("./simulation.js")
+      this.worker.onMessage((msg: WorkerResponse) => this.handleMessage(msg))
+      this.worker.postMessage({
+        definition: this.definition,
+        method: this.method,
+        rand: this.rand,
+      })
+    }
   }
 
   downloadCSV(idx: number) {
@@ -2739,11 +2752,11 @@ class Simulation {
 
   killWorker() {
     if (this.worker) {
-      this.ctrl.decr()
       this.worker.terminate()
       this.worker = undefined
+      this.ctrl.freeWorker()
     }
-    this.spawnNeeded = false
+    this.workerNeeded = false
   }
 
   markDirty() {
@@ -3005,13 +3018,13 @@ class Simulation {
     this.runs = []
     this.runsFinished = false
     this.runsUpdate = true
-    this.spawnNeeded = true
     this.selected = -1
     this.summaries = []
     this.variance = 0
+    this.workerNeeded = true
     this.markDirty()
     hide(this.$download)
-    this.spawn()
+    this.createWorker()
   }
 
   setDimensions() {
@@ -3179,19 +3192,6 @@ class Simulation {
     this.$summariesLink.innerHTML = "Hide All"
     show(this.$summaries)
     this.markDirty()
-  }
-
-  spawn() {
-    if (this.spawnNeeded && this.ctrl.incr()) {
-      this.spawnNeeded = false
-      this.worker = new AbstractedWorker("./simulation.js")
-      this.worker.onMessage((msg: WorkerResponse) => this.handleMessage(msg))
-      this.worker.postMessage({
-        definition: this.definition,
-        method: this.method,
-        rand: this.rand,
-      })
-    }
   }
 
   toggle(e: Event) {
