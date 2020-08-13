@@ -747,7 +747,7 @@ var Controller = /** @class */ (function () {
         this.cfg = cfg;
         this.cmps = [];
         this.definition = defaultConfigDefinition();
-        this.rand = 1591652858676;
+        this.rand = 1594657305146;
         this.paused = false;
         this.simList = [];
         this.sims = {};
@@ -2805,7 +2805,7 @@ function decimal(v) {
 function defaultConfig() {
     return {
         // the portion of people who have an Apple/Google-style Contact Tracing app installed
-        appleGoogleInstalled: 2 / 3,
+        appleGoogleInstalled: 0.6,
         // distribution of the number of clusters for a person
         clusterCount: new ZipfDistribution({ min: 1, max: 20 }),
         // distribution of the number of "primary" members in a cluster
@@ -2877,7 +2877,7 @@ function defaultConfig() {
         // the SafetyScore level needed to access a safeguarded cluster
         safeguardThreshold: 50,
         // the portion of clusters who safeguard access via SafetyScore
-        safeguardedClusters: 2 / 3,
+        safeguardedClusters: 0.6,
         // the portion of people who have SafetyScore installed at the start
         safetyScoreInstalled: 0,
         // a multiplicative weighting factor for second-degree tokens
@@ -2965,9 +2965,12 @@ function downloadPNG(svg, filename, height, width) {
 }
 function getCPUs() {
     if (typeof navigator !== "undefined" && navigator.hardwareConcurrency) {
-        return Math.max(1, Math.floor(navigator.hardwareConcurrency / 2));
+        var cpus = Math.max(1, Math.floor(navigator.hardwareConcurrency / 2));
+        if (cpus > 2) {
+            return cpus;
+        }
     }
-    return 2;
+    return 1;
 }
 function getCmdBool(flag) {
     return process.argv.indexOf(flag) !== -1;
