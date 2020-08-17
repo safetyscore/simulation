@@ -1036,7 +1036,7 @@ class Controller {
     this.cfg = defaultConfig()
     this.cmps = []
     this.definition = defaultConfigDefinition()
-    this.rand = 1594657305146
+    this.rand = 1594657305122
     this.paused = false
     this.simList = []
     this.sims = {}
@@ -3378,9 +3378,9 @@ function defaultConfig(): Config {
     // maximum number of runs to execute
     runsMax: 50,
     // minimum number of runs to execute
-    runsMin: 5,
+    runsMin: 10,
     // threshold of variance change at which to stop runs
-    runsVariance: 0.004,
+    runsVariance: 0.0005,
     // the SafetyScore level needed to access a safeguarded cluster
     safeguardThreshold: 50,
     // the portion of clusters who safeguard access via SafetyScore
@@ -3714,11 +3714,14 @@ function killWorkers() {
 
 function percent(v: number) {
   if (v < 1 || v > 99) {
-    v = parseFloat((Math.round(v * 100) / 100).toFixed(1))
-    if (v == 0) {
-      return "0"
+    const w = parseFloat((Math.round(v * 100) / 100).toFixed(1))
+    if (w === 0) {
+      if (v === 0) {
+        return "0"
+      }
+      return "< 0.1%"
     }
-    return `${v}%`
+    return `${w}%`
   }
   return `${Math.round(v)}%`
 }
