@@ -18,7 +18,7 @@ the web interface:
 ```typescript
 {
   // the portion of people who have an Apple/Google-style Contact Tracing app installed
-  appleGoogleInstalled: 2 / 3,
+  appleGoogleInstalled: 0.6,
 
   // distribution of the number of clusters for a person
   clusterCount: new ZipfDistribution({min: 1, max: 20}),
@@ -117,16 +117,16 @@ the web interface:
   runsMax: 50,
 
   // minimum number of runs to execute
-  runsMin: 5,
+  runsMin: 10,
 
   // threshold of variance change at which to stop runs
-  runsVariance: 0.004,
+  runsVariance: 0.0005,
 
   // the SafetyScore level needed to access a safeguarded cluster
   safeguardThreshold: 50,
 
   // the portion of clusters who safeguard access via SafetyScore
-  safeguardedClusters: 2 / 3,
+  safeguardedClusters: 0.6,
 
   // the portion of people who have SafetyScore installed at the start
   safetyScoreInstalled: 0,
