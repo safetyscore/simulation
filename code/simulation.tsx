@@ -1033,10 +1033,7 @@ class Controller {
   $main: HTMLElement
 
   constructor() {
-    const cfg = defaultConfig()
-    cfg.runsMax = 1
-    cfg.runsMin = 1
-    this.cfg = cfg
+    this.cfg = defaultConfig()
     this.cmps = []
     this.definition = defaultConfigDefinition()
     this.rand = 1594657305146
