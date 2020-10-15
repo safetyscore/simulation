@@ -353,7 +353,7 @@ class BarChart {
       "text-anchor": "middle",
       x: midX,
       y: this.height - this.labelHeight + this.padLabel,
-    }).innerHTML = `% ${label}`
+    }).innerHTML = `% ${label} (Median)`
     // Draw the bars for the different methods.
     const start = midX - 160
     for (let i = 0; i < METHODS.length; i++) {
@@ -884,7 +884,7 @@ class Comparison {
     )
     const $root = (
       <div class="simulation">
-        <div class="heading">Comparison of % {this.label}</div>
+        <div class="heading">Range of % {this.label}</div>
         {$downloadSVG}
         {$downloadPNG}
         <div class="clear"></div>
