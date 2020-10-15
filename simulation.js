@@ -143,7 +143,7 @@ var BarChart = /** @class */ (function () {
             "text-anchor": "middle",
             x: midX,
             y: this.height - this.labelHeight + this.padLabel,
-        }).innerHTML = "% " + label;
+        }).innerHTML = "% " + label + " (Median)";
         // Draw the bars for the different methods.
         var start = midX - 160;
         for (var i = 0; i < METHODS.length; i++) {
@@ -618,7 +618,7 @@ var Comparison = /** @class */ (function () {
             h("div", { class: "clear" })));
         var $root = (h("div", { class: "simulation" },
             h("div", { class: "heading" },
-                "Comparison of % ",
+                "Range of % ",
                 this.label),
             $downloadSVG,
             $downloadPNG,
